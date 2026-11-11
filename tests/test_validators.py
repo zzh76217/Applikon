@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """校验规则 R01-R18 单元测试（第三轮起覆盖 requirements.md 第五节全部 18 条）。
 边界值全部从 config/config.yaml 推导，测试代码不写死工艺数值；
-期望的 级别（通过/警告/错误）取自 requirements.md 第五节规则表的"级别"列。"""
+期望的 级别（通过/警告/错误）取自 requirements.md 第五节规则表的"级别"列。
+第四轮追加：R06 非法体积/非法直径防护与"极端输入 18 条全跑不崩溃"测试。"""
 import copy
 
 import pytest
@@ -246,3 +247,62 @@ class TestR18CultureDays:
 
     def test_default_pass(self):
         assert run_one("R18", make_inputs()).level == validators.LEVEL_PASS
+
+
+class TestR06IllegalVolumeGuard:
+    """第四轮防呆：D 已填但工作体积 ≤0 时，R06 必须返回 🔴 并说明原因，严禁除零崩溃。"""
+
+    @staticmethod
+    def _cfg_with_d():
+        cfg2 = copy.deepcopy(CFG)
+        cfg2["mixing_physics"]["impeller_diameter_m"] = 0.105
+        return cfg2
+
+    def test_zero_volume_with_diameter_gives_error_not_crash(self):
+        r = validators.rule_r06(make_inputs(v_work_ml=0.0), self._cfg_with_d())
+        assert r.level == validators.LEVEL_ERROR
+        assert "工作体积" in r.message
+
+    def test_negative_volume_with_diameter_gives_error(self):
+        r = validators.rule_r06(make_inputs(v_work_ml=-5.0), self._cfg_with_d())
+        assert r.level == validators.LEVEL_ERROR
+
+    def test_nonpositive_diameter_warns_not_crash(self):
+        cfg2 = copy.deepcopy(CFG)
+        cfg2["mixing_physics"]["impeller_diameter_m"] = 0.0
+        r = validators.rule_r06(make_inputs(), cfg2)
+        assert r.level == validators.LEVEL_WARN
+        assert "叶轮直径" in r.message
+
+
+class TestExtremeInputsNoCrash:
+    """第四轮约束：全 0 / 负数 / 超大等非法输入下，run_validation 仍须返回 18 条结果且不抛异常
+    （界面数字框虽已限制范围，但配方 JSON、手改 config 等路径仍可能带入极端值）。"""
+
+    EXTREMES = [
+        dict(v_work_ml=0.0, v_seed_ml=0.0, v_medium_ml=0.0, q_air_ml_min=0.0,
+             q_o2_ml_min=0.0, q_co2_ml_min=0.0, cd_inoc_mcells_ml=0.0,
+             cd_seed_mcells_ml=0.0, vvm=0.0, culture_days=0.0,
+             sampling_total_ml=0.0, rpm=0.0),
+        dict(v_work_ml=-100.0, v_seed_ml=-1.0, v_medium_ml=-50.0, q_air_ml_min=-10.0,
+             q_o2_ml_min=-1.0, q_co2_ml_min=-1.0, rpm=-50.0, cd_inoc_mcells_ml=-1.0,
+             cd_seed_mcells_ml=-1.0, vvm=-0.1, culture_days=-3.0, sampling_total_ml=-5.0),
+        dict(v_work_ml=9999999.0, v_seed_ml=9999999.0, v_medium_ml=0.0,
+             q_air_ml_min=9999999.0, q_o2_ml_min=9999999.0, q_co2_ml_min=9999999.0,
+             rpm=9999.0, cd_inoc_mcells_ml=99.0, cd_seed_mcells_ml=99.0, vvm=5.0,
+             culture_days=365.0, sampling_total_ml=999999.0),
+    ]
+
+    def test_run_validation_never_crashes(self):
+        for over in self.EXTREMES:
+            results = validators.run_validation(make_inputs(**over), CFG)
+            assert len(results) == 18
+            assert all(r.message for r in results)
+
+    def test_run_validation_never_crashes_with_diameter(self):
+        cfg2 = copy.deepcopy(CFG)
+        cfg2["mixing_physics"]["impeller_diameter_m"] = 0.105
+        for over in self.EXTREMES:
+            results = validators.run_validation(make_inputs(**over), cfg2)
+            assert len(results) == 18
+            assert all(r.message for r in results)

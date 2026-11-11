@@ -80,8 +80,9 @@ mixing_physics:                     # 答复#2/#3/#4：公式7 能量耗散；�
   epsilon_red_w_kg: 0.1             # 规则 R06 收紧：ε > 0.1 W/kg 报红禁止（答复#2，取代原文档 1.0）
   epsilon_yellow_w_kg: 0.05         # ε > 0.05 W/kg 报黄
   epsilon_recommended_w_kg: [0.02, 0.04]   # 工作推荐区（依据：工业 CHO 罐 P/V 22-35 W/m3，rho=1000 换算）
-  shear_gamma_enabled: false        # 答复#3：γ ≈ k x N 本轮暂缓，界面不展示，代码留接口
-  impeller_constant_k: null         # 暂无参考值，将来提供后填入即启用
+  shear_gamma_enabled: true         # 第四轮（2026-11-11 用户指令）：启用剪切速率估算展示；k 为 null 时界面输出黄色警告而不是报错
+  impeller_constant_k: null         # 叶轮常数 k（无量纲）：γ = k x N，N = rpm÷60（转/秒）。等用户提供文献/铭牌值，填入即自动生效
+  shear_gamma_note: "γ ≈ k×N 为经验估算，仅用于相对比较，不是实测剪切力"
 
 density_input:                      # 答复#5：两类浓度务必区分，界面单位统一 x10^6 cells/mL
   seed_conc_typical_mcells_ml: [1.0, 5.0]      # CD_seed = 摇瓶/种子罐收获浓度常见区间
@@ -132,6 +133,18 @@ storage:                            # 答复#11：模板库（第五轮使用 SQ
 recipes:                            # 第三轮：轻量"配方"= 界面输入参数的命名存档（JSON 文件）
   dir: "data/recipes"               # 配方保存目录
   builtin_default_name: "CHO 默认配方"   # 配方名输入框的占位默认名
+
+total_cells:                        # 第四轮：提示词文档§四(一)公式3 N_total = V_work × CD_inoc（单位换算固定为 细胞数/mL × mL）
+  display_unit: "×10⁶ cells"        # 界面与配置单显示单位（800 ×10⁶ cells 即 8.0×10⁸）
+
+agitation_start_suggestion:         # 第四轮：提示词文档§四(一)公式6 —— 按工作体积段给搅拌初始转速建议（仅建议，仍受 R05 校验）
+  bands_ml:                         # 自上而下匹配第一个满足 max_ml 的段；max_ml: null 表示"以上"
+    - { max_ml: 1000, rpm: 80 }     # V_work ≤ 1.0 L
+    - { max_ml: 1800, rpm: 100 }    # 1.0 - 1.8 L
+    - { max_ml: null, rpm: 120 }    # > 1.8 L
+
+setup_sheet_strict:                 # 第四轮：提示词文档§五(二)"红色必须阻止生成配置单"
+  block_export_on_error: true       # true=存在 🔴 时禁止导出/复制配置单
 
 ui_defaults:                        # 第二轮新增：界面初始值集中管理（默认值不写死在界面代码）
   working_volume_ml: 2000           # 目标工作体积初始值（requirements 3.3 算例常用体积，硬件配置页可改）

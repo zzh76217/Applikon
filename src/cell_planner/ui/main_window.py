@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""主窗口（第三轮）：两个标签页。
+"""主窗口（第四轮）：两个标签页。
+补充公式展示（N_total / 搅拌启动建议 / 剪切速率 γ）与"红色错误禁止导出配置单"红线在第四轮加入。
 ① 批次配置与校验：左侧"参数输入区"，右上"计算结果区"，右下"校验提示区"（R01-R18 全部 18 条）；
    新增配方保存/调用、开机配置单导出 CSV、一键复制。
 ② 硬件配置：修改体积上下限、MFC 量程与推荐参数默认值，写回 config/config.yaml（保留全部注释，
@@ -47,7 +48,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.cfg = get_config()
-        self.setWindowTitle("细胞培养接种与批次配置规划软件 — 第三轮：18 条校验 + 硬件配置 + 配置单导出 + 配方")
+        self.setWindowTitle("细胞培养接种与批次配置规划软件 — 第四轮：18 条校验 + 剪切估算 + 防呆导出 + 配方")
         self.resize(1200, 780)
         self.widgets = {}
         self.defaults = {}       # key -> 可调用对象，从"当前 config"取默认值（硬件配置页改完即生效）
@@ -282,7 +283,35 @@ class MainWindow(QMainWindow):
             "计划累计取样：             %s mL" % _fmt(inp.sampling_total_ml),
             "碱泵流量系数建议：         不超过 %s mL/(min·L)（%s）" % (_fmt(ap["max_rate_ml_per_min_per_L"]), ap["note"]),
         ]
+        lines += self._supplement_rows(inp)
         self.txt_results.setPlainText("\n".join(lines))
+
+    def _supplement_rows(self, inp) -> list:
+        """第四轮：补充公式展示行（提示词文档§四(四)）。
+        k 为 null 时按"黄色文字警告、不崩溃"处理（同叶轮直径 D 缺参数模式）；
+        配置被手工改坏导致缺键时也仅输出一行警告，绝不抛异常。"""
+        extra = []
+        try:
+            n_total = formulas.total_cells_millions(inp.v_work_ml, inp.cd_inoc_mcells_ml)
+            unit = str(self.cfg["total_cells"]["display_unit"])
+            extra.append("总需细胞数 N_total（补充公式A）：      %s %s（即 %s cells）" % (
+                _fmt(n_total), unit, formulas.scientific_cn(n_total * 1000000.0)))
+            sug = formulas.agitation_start_rpm_suggestion(
+                inp.v_work_ml, self.cfg["agitation_start_suggestion"]["bands_ml"])
+            extra.append("搅拌启动建议转速（补充公式B）：      %s rpm（按工作体积分段，仅建议，实际仍受 R05 校验）" % _fmt(sug))
+            mp = self.cfg["mixing_physics"]
+            if bool(mp.get("shear_gamma_enabled", False)):
+                k = mp.get("impeller_constant_k")
+                if k is None:
+                    extra.append("⚠️ 缺少叶轮常数 k，无法估算剪切速率 γ（补充公式C），"
+                                 "请在 config.yaml 的 mixing_physics.impeller_constant_k 补充后自动生效")
+                else:
+                    gamma = formulas.shear_gamma_per_s(inp.rpm, k)
+                    extra.append("表观剪切速率估算 γ（补充公式C）：      %s 1/s（γ≈k×N，k=%s；%s）" % (
+                        _fmt(gamma), _fmt(k), mp.get("shear_gamma_note", "")))
+        except (ValueError, KeyError, TypeError) as exc:
+            extra.append("⚠️ 补充公式展示项无法计算（配置可能不完整）：" + str(exc))
+        return extra
 
     def _render_table(self, results) -> None:
         self.tbl.setRowCount(len(results))
@@ -306,6 +335,26 @@ class MainWindow(QMainWindow):
                ("存在 🟡 警告，可继续但需人工确认。" if n_warn else "全部通过 ✅。")))
 
     # ---------------- 配置单导出 / 复制 ----------------
+    def _export_blocked_by_errors(self) -> bool:
+        """第四轮红线（提示词文档§五(二)）：config setup_sheet_strict.block_export_on_error 为 true 时，
+        存在任何 🔴 错误即禁止导出/复制配置单；为 false 时退回第三轮的"询问确认"行为。"""
+        errors = [r for r in self._last["results"] if r.level == validators.LEVEL_ERROR]
+        if not errors:
+            return False
+        strict = bool(self.cfg.get("setup_sheet_strict", {}).get("block_export_on_error", False))
+        if strict:
+            detail = "\n".join("· %s %s：%s" % (r.rule_id, r.name, r.message) for r in errors)
+            QMessageBox.warning(
+                self, "存在红色错误，已禁止导出",
+                "当前配置有 %d 项 🔴 错误，按约定禁止生成配置单。请修正输入后重新点「计算并校验」。\n\n%s" % (len(errors), detail))
+            return True
+        answer = QMessageBox.question(
+            self, "存在红色错误",
+            "当前配置有 %d 项 🔴 错误，本不应上机。仍要导出配置单留档吗？" % len(errors),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer != QMessageBox.Yes
+
+
     def _sheet_rows(self):
         if self._last is None:
             return None
@@ -319,14 +368,8 @@ class MainWindow(QMainWindow):
         if rows is None:
             QMessageBox.warning(self, "尚未计算", "请先点「计算并校验」，再导出配置单。")
             return
-        n_err = sum(1 for r in self._last["results"] if r.level == validators.LEVEL_ERROR)
-        if n_err:
-            answer = QMessageBox.question(
-                self, "存在红色错误",
-                "当前配置有 %d 项 🔴 错误，本不应上机。仍要导出配置单留档吗？" % n_err,
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if answer != QMessageBox.Yes:
-                return
+        if self._export_blocked_by_errors():
+            return
         default = str(PROJECT_ROOT / ("开机配置单_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M")))
         path, _ = QFileDialog.getSaveFileName(self, "导出开机配置单 CSV", default, "CSV 文件 (*.csv)")
         if not path:
@@ -343,6 +386,8 @@ class MainWindow(QMainWindow):
         rows = self._sheet_rows()
         if rows is None:
             QMessageBox.warning(self, "尚未计算", "请先点「计算并校验」，再复制配置单。")
+            return
+        if self._export_blocked_by_errors():
             return
         QApplication.clipboard().setText("\t".join(sheet_export.HEADER) + "\n" +
                                          "\n".join("\t".join(str(c) for c in row[1:]) for row in rows[1:]))

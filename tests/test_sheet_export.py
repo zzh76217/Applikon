@@ -3,6 +3,7 @@
 核心数值期望值取自 requirements.md 3.3 算例：V_work=2000, CD_inoc=0.4, CD_seed=3.0, vvm=0.1, O2=10%
   => V_seed=266.7 mL、Q_air=200 mL/min、Q_O2=20 mL/min（浮点显示为 266.67/200/20）。
 """
+import copy
 import csv
 
 import pytest
@@ -86,3 +87,49 @@ class TestExportCsv:
         with open(out, "r", encoding=CFG["setup_sheet_export"]["csv_encoding"], newline="") as fh:
             read_back = list(csv.reader(fh))
         assert read_back == [[str(c) for c in row] for row in rows]
+
+
+class TestRound4Rows:
+    """第四轮新增行：总需细胞数 N_total（补充公式A）、搅拌启动建议转速（补充公式B）、
+    剪切速率估算 γ（补充公式C，k 缺值时必须写"无法计算"而不是崩溃）。
+    N_total 期望值 800（×10⁶ cells）逐字取自提示词文档 §四(四) 算例。"""
+
+    @staticmethod
+    def _rows_for(cfg=None):
+        inp, v_base, v_af, results = build_case_a()
+        return sheet_export.build_sheet_rows(inp, v_base, v_af, "CHO-DG44", "CD 培养基",
+                                             results, cfg or CFG), inp
+
+    def test_n_total_row_matches_doc_example(self):
+        rows, _ = self._rows_for()
+        r = row_of(rows, "总需细胞数 N_total")
+        assert r[2] == "800"
+        assert r[3] == CFG["total_cells"]["display_unit"]
+        assert "8.0×10⁸" in r[4]
+
+    def test_agitation_suggestion_row_2000ml(self):
+        rows, _ = self._rows_for()
+        assert row_of(rows, "搅拌启动建议转速")[2] == "120"
+
+    def test_shear_row_defends_missing_k(self):
+        mp = CFG["mixing_physics"]
+        if not mp.get("shear_gamma_enabled") or mp.get("impeller_constant_k") is not None:
+            pytest.skip("仅在第四轮当前配置（启用 γ 展示且 k=null）下验证缺 k 防护")
+        rows, _ = self._rows_for()
+        r = row_of(rows, "剪切速率估算 γ")
+        assert "叶轮常数 k" in r[2]
+
+    def test_shear_row_computes_when_k_provided(self):
+        cfg2 = copy.deepcopy(CFG)
+        cfg2["mixing_physics"]["shear_gamma_enabled"] = True
+        cfg2["mixing_physics"]["impeller_constant_k"] = 10.0
+        rows, inp = self._rows_for(cfg2)
+        r = row_of(rows, "剪切速率估算 γ")
+        expected = 10.0 * inp.rpm / 60.0  # 恒等关系（k=10 为占位值，非工艺期望值）
+        assert float(r[2]) == pytest.approx(expected, abs=0.01)  # 配置单数值列按 2 位小数显示
+
+    def test_shear_row_hidden_when_disabled(self):
+        cfg2 = copy.deepcopy(CFG)
+        cfg2["mixing_physics"]["shear_gamma_enabled"] = False
+        rows, _ = self._rows_for(cfg2)
+        assert all(r[1] != "剪切速率估算 γ" for r in rows)

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""开机配置单导出（第三轮）：把一次"计算并校验"的结果整理成表格行，一键导出 CSV。
+"""开机配置单导出（第三轮建、第四轮扩充）：把一次"计算并校验"的结果整理成表格行，一键导出 CSV。
 CSV 用 config 里的 setup_sheet_export.csv_encoding（默认 utf-8-sig，Excel/WPS 双击打开不乱码）。
 所有阈值与备注文字来自 config 与校验结果，本模块不新增工艺数值。
+第四轮新增行：总需细胞数 N_total（补充公式A）、搅拌启动建议转速（补充公式B）、剪切速率估算 γ（补充公式C，k 缺值时写"无法计算"而不是崩溃）。
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import csv
 from pathlib import Path
 from typing import List, Optional
 
+from cell_planner.core import formulas
 from cell_planner.core.config_loader import get_config
 from cell_planner.core.validators import LEVEL_ERROR, LEVEL_PASS, LEVEL_WARN, RuleResult, SetupInputs
 
@@ -44,6 +46,12 @@ def build_sheet_rows(inp: SetupInputs, v_base_ml: float, v_af_ml: float,
     rows.append(["体积", "碱液预留 V_base", _fmt(v_base_ml), "mL", "占工作体积比例（界面输入）"])
     rows.append(["体积", "消泡剂 V_antifoam", _fmt(v_af_ml), "mL", "占工作体积比例（界面输入）"])
     rows.append(["体积", "培养基补液 V_medium", _fmt(inp.v_medium_ml), "mL", "公式2：V_work−V_seed−V_base−V_antifoam"])
+    try:
+        n_total = formulas.total_cells_millions(inp.v_work_ml, inp.cd_inoc_mcells_ml)
+        rows.append(["体积", "总需细胞数 N_total", _fmt(n_total), str(cfg["total_cells"]["display_unit"]),
+                     "补充公式A：V_work×CD_inoc（即 %s cells）" % formulas.scientific_cn(n_total * 1000000.0)])
+    except (ValueError, KeyError, TypeError) as exc:
+        rows.append(["体积", "总需细胞数 N_total", "无法计算", "", "配置不完整：" + str(exc)])
 
     rows.append(["通气", "通气强度 vvm", _fmt(inp.vvm), "vvm", "界面输入"])
     rows.append(["通气", "Air 流量 Q_air", _fmt(inp.q_air_ml_min), "mL/min", "公式3：vvm×V_work"])
@@ -51,6 +59,12 @@ def build_sheet_rows(inp: SetupInputs, v_base_ml: float, v_af_ml: float,
     rows.append(["通气", "CO2 流量 Q_CO2", _fmt(inp.q_co2_ml_min), "mL/min", "公式5：Q_air×%s%%" % _fmt(inp.co2_ratio_percent)])
 
     rows.append(["控制设定点", "搅拌初始转速", _fmt(inp.rpm), "rpm", "界面输入"])
+    try:
+        rpm_sug = formulas.agitation_start_rpm_suggestion(inp.v_work_ml, cfg["agitation_start_suggestion"]["bands_ml"])
+        rows.append(["控制设定点", "搅拌启动建议转速", _fmt(rpm_sug), "rpm",
+                     "补充公式B：按工作体积分段建议（仅建议，实际仍受 R05 校验）"])
+    except (ValueError, KeyError, TypeError) as exc:
+        rows.append(["控制设定点", "搅拌启动建议转速", "无法计算", "", "配置不完整：" + str(exc)])
     rows.append(["控制设定点", "生长阶段温度", _fmt(inp.temp_growth_c), "°C", "界面输入"])
     if inp.temp_expression_c is not None:
         rows.append(["控制设定点", "表达阶段温度", _fmt(inp.temp_expression_c), "°C", "界面输入（已启用降温）"])
@@ -65,6 +79,19 @@ def build_sheet_rows(inp: SetupInputs, v_base_ml: float, v_af_ml: float,
                  "R17 上限 = 工作体积×%s%%" % _fmt(frac * 100.0)])
     rows.append(["加液", "碱泵流量系数建议", _fmt(ap["max_rate_ml_per_min_per_L"]), "mL/(min·L)",
                  "config：alkali_pump；" + str(ap["note"])])
+
+    mp = cfg["mixing_physics"]
+    if bool(mp.get("shear_gamma_enabled", False)):
+        k = mp.get("impeller_constant_k")
+        note = "补充公式C：γ≈k×N；" + str(mp.get("shear_gamma_note", ""))
+        if k is None:
+            rows.append(["剪切", "剪切速率估算 γ", "无法计算：缺少叶轮常数 k（config 补充后自动生效）", "1/s", note])
+        else:
+            try:
+                rows.append(["剪切", "剪切速率估算 γ", _fmt(formulas.shear_gamma_per_s(inp.rpm, k)), "1/s",
+                             note + "（k=%s）" % _fmt(k)])
+            except ValueError as exc:
+                rows.append(["剪切", "剪切速率估算 γ", "无法计算：" + str(exc), "1/s", note])
 
     n_err = sum(1 for r in results if r.level == LEVEL_ERROR)
     n_warn = sum(1 for r in results if r.level == LEVEL_WARN)

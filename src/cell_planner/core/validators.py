@@ -3,6 +3,7 @@
 requirements.md 第五节校验规则 —— 第三轮起全部 18 条（R01-R18）落地。
 所有阈值来自 config/config.yaml（get_config），本文件不写死任何工艺数值。
 R06 特殊处理（用户 2026-11-11 定案）：叶轮直径 D 为 null 时不计算 ε，
+第四轮补强：D 已填但工作体积 ≤ 0 或直径 ≤ 0 时，返回红/黄并说明原因，严禁除零崩溃。
 R15 合并答复#5 的三类密度检查：CD_seed>CD_inoc、CD_seed 上限报红、反应器起始密度合理区间报黄。
 输出黄色警告"叶轮直径参数缺失，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃。
 """
@@ -125,6 +126,12 @@ def rule_r06(inp: SetupInputs, cfg: dict) -> RuleResult:
     d = mp.get("impeller_diameter_m")
     if d is None:
         return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_WARN, MISSING_D_MSG)
+    if inp.v_work_ml <= 0:
+        return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_ERROR,
+                          "工作体积必须大于 0 mL，无法计算能量耗散率 ε，请先修正 R01 的工作体积输入。")
+    if d <= 0:
+        return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_WARN,
+                          "叶轮直径配置值 " + str(d) + " m 不合理（应大于 0），无法计算 ε，请在硬件配置页或 config.yaml 修正。")
     rho = mp["broth_density_kg_m3"]
     np_ = mp["power_number_np"]
     red = mp["epsilon_red_w_kg"]
