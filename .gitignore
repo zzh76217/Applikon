@@ -9,4 +9,7 @@ dist/
 *.spec
 data/*.db
 data/*.csv
+data/recipes/
 ~$*
+config/*.bak
+/开机配置单_*.csv

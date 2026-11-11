@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""校验规则 R01-R13 单元测试（第二轮范围；R14-R18 属第三轮，禁止提前实现）。
+"""校验规则 R01-R18 单元测试（第三轮起覆盖 requirements.md 第五节全部 18 条）。
 边界值全部从 config/config.yaml 推导，测试代码不写死工艺数值；
 期望的 级别（通过/警告/错误）取自 requirements.md 第五节规则表的"级别"列。"""
 import copy
@@ -32,6 +32,9 @@ def make_inputs(**overrides):
         co2_ratio_percent=pd["co2_ratio_percent"]["set"],
         cd_inoc_mcells_ml=pd["inoculum_density_mcells_ml"]["set"],
         cd_seed_mcells_ml=3.0,
+        vvm=pd["aeration_vvm"]["set"],
+        culture_days=pd["culture_days"]["set"],
+        sampling_total_ml=float(CFG["ui_defaults"]["sampling_total_ml"]),
     )
     base.update(overrides)
     return validators.SetupInputs(**base)
@@ -43,11 +46,16 @@ def run_one(rule_id, inp):
 
 
 class TestScope:
-    """本轮范围控制：恰好实现 R01-R13，不得提前出现 R14+。"""
+    """第三轮范围控制：恰好实现 R01-R18 全部 18 条，不缺不多。"""
 
-    def test_exact_rule_ids_r01_to_r13(self):
+    def test_exact_rule_ids_r01_to_r18(self):
         ids = [r.rule_id for r in validators.run_validation(make_inputs(), CFG)]
-        assert ids == ["R%02d" % i for i in range(1, 14)]
+        assert ids == ["R%02d" % i for i in range(1, 19)]
+
+    def test_baseline_expected_warnings_are_r06_and_r16(self):
+        res = validators.run_validation(make_inputs(), CFG)
+        warn_ids = sorted(r.rule_id for r in res if r.level == validators.LEVEL_WARN)
+        assert warn_ids == ["R06", "R16"]   # 缺叶轮直径 + 曝气方式强制提示，均属预期
 
     def test_baseline_no_error(self):
         res = validators.run_validation(make_inputs(), CFG)
@@ -162,3 +170,79 @@ class TestR12R13GasRatios:
 
     def test_o2_ratio_zero_pass(self):
         assert run_one("R12", make_inputs(o2_ratio_percent=0.0)).level == validators.LEVEL_PASS
+
+
+class TestR14Vvm:
+    def test_below_recommended_warn(self):
+        lo = CFG["process_defaults"]["aeration_vvm"]["min"]
+        assert run_one("R14", make_inputs(vvm=lo / 2)).level == validators.LEVEL_WARN
+
+    def test_above_recommended_warn(self):
+        hi = CFG["process_defaults"]["aeration_vvm"]["max"]
+        assert run_one("R14", make_inputs(vvm=hi * 2)).level == validators.LEVEL_WARN
+
+    def test_in_range_pass(self):
+        assert run_one("R14", make_inputs()).level == validators.LEVEL_PASS
+
+
+class TestR15Density:
+    """R15：CD_seed 必须大于 CD_inoc（🔴）；并合并答复#5 的浓度检查。"""
+
+    def test_seed_not_above_inoc_error(self):
+        pd = CFG["process_defaults"]
+        inoc = pd["inoculum_density_mcells_ml"]["set"]
+        assert run_one("R15", make_inputs(cd_seed_mcells_ml=inoc, cd_inoc_mcells_ml=inoc)).level == validators.LEVEL_ERROR
+
+    def test_seed_below_inoc_error(self):
+        assert run_one("R15", make_inputs(cd_seed_mcells_ml=0.5, cd_inoc_mcells_ml=1.0)).level == validators.LEVEL_ERROR
+
+    def test_seed_above_red_max_error(self):
+        red = CFG["density_input"]["seed_conc_red_max_mcells_ml"]
+        assert run_one("R15", make_inputs(cd_seed_mcells_ml=red + 1)).level == validators.LEVEL_ERROR
+
+    def test_inoc_below_common_band_warn(self):
+        inoc_min = CFG["process_defaults"]["inoculum_density_mcells_ml"]["min"]
+        assert run_one("R15", make_inputs(cd_inoc_mcells_ml=inoc_min / 2.0)).level == validators.LEVEL_WARN
+
+    def test_inoc_recommended_default_pass(self):
+        """requirements 3.1 默认接种密度 0.4 低于常见区间 0.5，但属工艺推荐范围，应通过。"""
+        assert run_one("R15", make_inputs()).level == validators.LEVEL_PASS
+
+    def test_inoc_above_common_band_warn(self):
+        hi = CFG["density_input"]["reactor_initial_density_yellow_range_mcells_ml"][1]
+        seed_red = CFG["density_input"]["seed_conc_red_max_mcells_ml"]
+        # 起始密度高于常见区间上限（但低于界面输入上限 20，且 CD_seed 仍大于它、不超红线）
+        assert run_one("R15", make_inputs(cd_inoc_mcells_ml=hi + 1, cd_seed_mcells_ml=seed_red - 0.5)).level == validators.LEVEL_WARN
+
+
+class TestR16Sparger:
+    def test_forced_hint_always_warn(self):
+        """requirements 第五节：R16 为界面强制提示（🟡），任何配置下都必须出现。"""
+        r = run_one("R16", make_inputs())
+        assert r.level == validators.LEVEL_WARN
+        assert "曝气头" in r.message and "L 型管" in r.message
+
+
+class TestR17Sampling:
+    def test_at_limit_pass(self):
+        frac = CFG["sampling"]["max_cumulative_fraction_of_working"]
+        v_work = CFG["ui_defaults"]["working_volume_ml"]
+        assert run_one("R17", make_inputs(v_work_ml=v_work, sampling_total_ml=frac * v_work)).level == validators.LEVEL_PASS
+
+    def test_above_limit_warn(self):
+        frac = CFG["sampling"]["max_cumulative_fraction_of_working"]
+        v_work = CFG["ui_defaults"]["working_volume_ml"]
+        assert run_one("R17", make_inputs(v_work_ml=v_work, sampling_total_ml=frac * v_work + 1)).level == validators.LEVEL_WARN
+
+
+class TestR18CultureDays:
+    def test_below_range_warn(self):
+        lo = CFG["process_defaults"]["culture_days"]["min"]
+        assert run_one("R18", make_inputs(culture_days=lo - 1)).level == validators.LEVEL_WARN
+
+    def test_above_range_warn(self):
+        hi = CFG["process_defaults"]["culture_days"]["max"]
+        assert run_one("R18", make_inputs(culture_days=hi + 1)).level == validators.LEVEL_WARN
+
+    def test_default_pass(self):
+        assert run_one("R18", make_inputs()).level == validators.LEVEL_PASS

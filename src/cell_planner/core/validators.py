@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-requirements.md 第五节校验规则 —— 第二轮仅实现 R01-R13（R14-R18 按要求留到第三轮，勿提前实现）。
+requirements.md 第五节校验规则 —— 第三轮起全部 18 条（R01-R18）落地。
 所有阈值来自 config/config.yaml（get_config），本文件不写死任何工艺数值。
 R06 特殊处理（用户 2026-11-11 定案）：叶轮直径 D 为 null 时不计算 ε，
+R15 合并答复#5 的三类密度检查：CD_seed>CD_inoc、CD_seed 上限报红、反应器起始密度合理区间报黄。
 输出黄色警告"叶轮直径参数缺失，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃。
 """
 from __future__ import annotations
@@ -53,6 +54,9 @@ class SetupInputs:
     co2_ratio_percent: float
     cd_inoc_mcells_ml: float
     cd_seed_mcells_ml: float
+    vvm: float
+    culture_days: float
+    sampling_total_ml: float
 
 
 def _n(x: float) -> str:
@@ -63,11 +67,12 @@ def _n(x: float) -> str:
 
 
 def run_validation(inp: SetupInputs, cfg: Optional[dict] = None) -> List[RuleResult]:
-    """按 R01→R13 顺序逐条校验，返回结果列表。"""
+    """按 R01→R18 顺序逐条校验，返回结果列表。"""
     cfg = cfg or get_config()
     return [fn(inp, cfg) for fn in (
         rule_r01, rule_r02, rule_r03, rule_r04, rule_r05, rule_r06,
         rule_r07, rule_r08, rule_r09, rule_r10, rule_r11, rule_r12, rule_r13,
+        rule_r14, rule_r15, rule_r16, rule_r17, rule_r18,
     )]
 
 
@@ -208,3 +213,75 @@ def rule_r13(inp: SetupInputs, cfg: dict) -> RuleResult:
                           "CO2 配比 %s%%，不超过上限 %s%%。" % (_n(inp.co2_ratio_percent), _n(hi)))
     return RuleResult("R13", "CO2 配比上限", LEVEL_WARN,
                       "CO2 配比 %s%% 超过上限 %s%%，pH 控制与安全性需人工确认。" % (_n(inp.co2_ratio_percent), _n(hi)))
+
+
+def rule_r14(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """R14：通气量对应 vvm 在推荐范围（0.05-0.1，取自 config）。"""
+    rng = cfg["process_defaults"]["aeration_vvm"]
+    lo, hi = rng["min"], rng["max"]
+    v = inp.vvm
+    if lo <= v <= hi:
+        return RuleResult("R14", "通气量 vvm 推荐区间", LEVEL_PASS,
+                          "vvm = %s，位于推荐区间 %s–%s。" % (_n(v), _n(lo), _n(hi)))
+    return RuleResult("R14", "通气量 vvm 推荐区间", LEVEL_WARN,
+                      "vvm = %s 超出推荐区间 %s–%s，可能供氧不足或起泡/剪切风险增加，需人工确认。" % (_n(v), _n(lo), _n(hi)))
+
+
+def rule_r15(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """R15：种子液浓度必须大于目标接种密度（否则无法稀释接种，🔴）；
+    并合并答复#5：CD_seed 超上限报红、反应器起始密度超出合理区间报黄。"""
+    di = cfg["density_input"]
+    cd_seed = inp.cd_seed_mcells_ml
+    cd_inoc = inp.cd_inoc_mcells_ml
+    seed_red = di["seed_conc_red_max_mcells_ml"]
+    y_lo, y_hi = di["reactor_initial_density_yellow_range_mcells_ml"]
+    # hard_max（界面输入上限 20）由配置页自旋框封顶实现（答复#5），R15 内不再判（先被 CD_seed 红线拦截，属不可达分支）
+    if cd_seed <= cd_inoc:
+        return RuleResult("R15", "种子/接种密度合理性", LEVEL_ERROR,
+                          "种子液浓度 %s 不高于目标接种密度 %s（×10⁶ cells/mL），无法稀释接种，请核对细胞计数结果。" % (_n(cd_seed), _n(cd_inoc)))
+    if cd_seed > seed_red:
+        return RuleResult("R15", "种子/接种密度合理性", LEVEL_ERROR,
+                          "种子液浓度 %s ×10⁶ cells/mL 超过典型上限 %s（摇瓶/种子罐收获浓度通常 1–5），疑似计数错误，禁止按此配置上机。" % (_n(cd_seed), _n(seed_red)))
+    inoc = cfg["process_defaults"]["inoculum_density_mcells_ml"]
+    if inoc["min"] <= cd_inoc <= inoc["max"]:
+        return RuleResult("R15", "种子/接种密度合理性", LEVEL_PASS,
+                          "种子液浓度 %s > 目标接种密度 %s（×10⁶ cells/mL），接种密度处于工艺推荐范围 %s–%s。" % (_n(cd_seed), _n(cd_inoc), _n(inoc["min"]), _n(inoc["max"])))
+    if cd_inoc < y_lo or cd_inoc > y_hi:
+        return RuleResult("R15", "种子/接种密度合理性", LEVEL_WARN,
+                          "反应器起始密度 %s ×10⁶ cells/mL 超出常见合理区间 %s–%s，可继续但需人工确认。" % (_n(cd_inoc), _n(y_lo), _n(y_hi)))
+    return RuleResult("R15", "种子/接种密度合理性", LEVEL_PASS,
+                      "种子液浓度 %s > 目标接种密度 %s（×10⁶ cells/mL），且均在合理区间内。" % (_n(cd_seed), _n(cd_inoc)))
+
+
+def rule_r16(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """R16：曝气方式必须为烧结曝气头 —— 界面强制提示（🟡），禁止选 L 型管直吹。"""
+    sp = str(cfg["hardware"].get("sparger_required") or "")
+    if sp != "sintered":
+        return RuleResult("R16", "曝气方式强制提示", LEVEL_ERROR,
+                          "配置中 sparger_required 不是 sintered，与 my-Control 3L 手册（多孔陶瓷/金属烧结曝气头，约 15 μm）不符，请修正硬件配置。")
+    return RuleResult("R16", "曝气方式强制提示", LEVEL_WARN,
+                      "强制提示：曝气必须使用烧结曝气头（约 15 μm），严禁 L 型管直吹！上机前请人工核对实际安装的曝气头类型。")
+
+
+def rule_r17(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """R17：计划累计取样体积不超过工作体积的规定百分比。"""
+    frac = cfg["sampling"]["max_cumulative_fraction_of_working"]
+    limit = frac * inp.v_work_ml
+    v = inp.sampling_total_ml
+    if v <= limit + 1e-9:
+        return RuleResult("R17", "累计取样体积上限", LEVEL_PASS,
+                          "计划累计取样 %s mL，不超过工作体积的 %s%%（上限 %s mL）。" % (_n(v), _n(frac * 100.0), _n(limit)))
+    return RuleResult("R17", "累计取样体积上限", LEVEL_WARN,
+                      "计划累计取样 %s mL 超过工作体积的 %s%%（上限 %s mL），可能明显损耗培养体系，需人工确认取样计划。" % (_n(v), _n(frac * 100.0), _n(limit)))
+
+
+def rule_r18(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """R18：培养周期在推荐范围内（7–14 天，取自 config）。"""
+    rng = cfg["process_defaults"]["culture_days"]
+    lo, hi = rng["min"], rng["max"]
+    d = inp.culture_days
+    if lo <= d <= hi:
+        return RuleResult("R18", "培养周期范围", LEVEL_PASS,
+                          "培养周期 %s 天，位于 %s–%s 天推荐范围。" % (_n(d), _n(lo), _n(hi)))
+    return RuleResult("R18", "培养周期范围", LEVEL_WARN,
+                      "培养周期 %s 天超出 %s–%s 天推荐范围，营养/污染风险增加，需人工确认。" % (_n(d), _n(lo), _n(hi)))
