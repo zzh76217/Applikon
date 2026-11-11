@@ -89,3 +89,9 @@ setup_sheet_export:                 # 答复#9：不做 PDF，省掉 reportlab
 storage:                            # 答复#11：模板库
   engine: "sqlite3"                 # Python 标准库，不新增第三方依赖
   templates_db_path: "data/templates.db"
+ui_defaults:                        # 第二轮新增：界面初始值集中管理（默认值不写死在界面代码）
+  working_volume_ml: 2000           # 目标工作体积初始值（requirements 3.3 算例常用体积）
+  seed_conc_mcells_ml: 3.0          # CD_seed 初始值（常见区间 1-5 中值，requirements 3.3 算例）
+  expression_temp_enabled: false    # 默认不启用表达阶段降温
+  cell_line_name: "CHO-DG44"        # 细胞株初始文本
+  medium_type: "CD 化学限定培养基"   # 培养基类型初始文本
