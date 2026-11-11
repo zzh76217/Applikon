@@ -1,0 +1,91 @@
+# =============================================================
+# 细胞培养接种与批次配置规划软件 — 集中配置文件
+# 阈值来源：requirements.md 第二/3.1/五节 + 用户第一轮答复（决策记录见 README.md）
+# 第五节 18 条校验规则与全部公式参数一律从本文件读取，严禁代码硬编码
+# 最后更新：2026-11-11（第一轮"待确认"项已按用户答复 #1-#11 填入）
+# =============================================================
+
+hardware:                           # 第二节：Applikon my-Control 3L 硬件上下限
+  reactor_model: "Applikon my-Control 3 L"
+  total_volume_ml: 3100             # 总容积 3.1 L
+  min_working_volume_ml: 600        # 规则 R01 下限
+  max_working_volume_ml: 2400       # 规则 R01 上限
+  mfc_max_ml_min:                   # 规则 R02-R04：质量流量计量程
+    air: 1500
+    n2: 1500
+    o2: 1500
+    co2: 800
+  sparger_required: "sintered"      # 规则 R16：必须烧结曝气头，界面禁止选 L 型管直吹
+  impeller_type: "Marine"           # Marine 叶轮（低剪切，细胞培养专用）
+
+process_defaults:                   # 3.1 节：默认工艺参数（界面可改，改后仍受范围校验）
+  temp_growth_c:        { set: 37.0, min: 36.5, max: 37.0 }
+  temp_expression_c:    { set: 35.0, min: 34.0, max: 36.0 }   # R11 整体区间 34.0-37.0
+  ph_setpoint:          { set: 7.05, min: 7.00, max: 7.20 }   # 规则 R10
+  do_percent:           { set: 50,   min: 40,   max: 70   }   # 规则 R09；答复#7：默认 50%、最低 40%
+  agitation_rpm:        { set: 100,  min: 80,   max: 150  }   # 规则 R05
+  aeration_vvm:         { set: 0.1,  min: 0.05, max: 0.1  }   # 规则 R14
+  o2_ratio_percent:     { set: 10,   min: 0,    max: 20   }   # 规则 R12
+  co2_ratio_percent:    { set: 10,   min: 0,    max: 25   }   # 规则 R13，推荐区间 10-25
+  inoculum_density_mcells_ml: { set: 0.4, min: 0.3, max: 0.5 }  # CD_inoc，界面单位统一 x10^6 cells/mL（答复#5）
+  culture_days:         { set: 10,   min: 7,    max: 14   }   # 规则 R18
+
+liquid_additives:                   # 答复#1：公式2 V_medium = V_work - V_seed - V_base - V_antifoam
+  base_type: "7.5% NaHCO3"          # 碱液种类（界面可改）
+  base_fraction_of_working:     { default: 0.02,  min: 0.0, max: 0.05 }   # 碱液默认预留工作体积 2%
+  antifoam_fraction_of_working: { default: 0.001, min: 0.0, max: 0.01 }   # 消泡剂默认 0.1%（2 L 时约 2 mL）
+
+mixing_physics:                     # 答复#2/#3/#4：公式7 能量耗散；公式8 剪切速率暂缓
+  broth_density_kg_m3: 1000         # rho 按 1000 近似（答复#4）
+  power_number_np: 0.35             # Marine/推进式湍流典型 Np，与细胞株无关（答复#2）
+  impeller_diameter_m: null         # 【用户决定2026-11-11】暂保留 null。D 为 null 时：不计算 ε，也不判 R06 红/黄，改为输出黄色警告"⚠️ 缺少叶轮直径参数，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃
+  rpm_to_rad_s: "N[rad/s] = rpm / 60 * 2 * pi"
+  epsilon_red_w_kg: 0.1             # 规则 R06 收紧：ε > 0.1 W/kg 报红禁止（答复#2，取代原文档 1.0）
+  epsilon_yellow_w_kg: 0.05         # ε > 0.05 W/kg 报黄
+  epsilon_recommended_w_kg: [0.02, 0.04]   # 工作推荐区（依据：工业 CHO 罐 P/V 22-35 W/m3，rho=1000 换算）
+  shear_gamma_enabled: false        # 答复#3：γ ≈ k x N 本轮暂缓，界面不展示，代码留接口
+  impeller_constant_k: null         # 暂无参考值，将来提供后填入即启用
+
+density_input:                      # 答复#5：两类浓度务必区分，界面单位统一 x10^6 cells/mL
+  seed_conc_typical_mcells_ml: [1.0, 5.0]      # CD_seed = 摇瓶/种子罐收获浓度常见区间
+  seed_conc_red_max_mcells_ml: 10.0            # CD_seed > 10 报红（R15 同时要求 CD_seed > CD_inoc）
+  reactor_initial_density_yellow_range_mcells_ml: [0.5, 5.0]   # "接种后反应器内起始密度"合理区间，区间外报黄
+  reactor_initial_density_hard_max_mcells_ml: 20.0             # 起始密度输入上限放到 20 并报黄
+
+alkali_pump:                        # 答复#6：配置单输出项
+  max_rate_ml_per_min_per_L: 0.05   # 定义：每分钟每升培养体积最多允许补加的碱液 mL 数（安全上限建议值）
+  note: "仅供参考，以 my-Control 实际 PID 整定为准"
+
+sampling:                           # 规则 R17
+  max_cumulative_fraction_of_working: 0.10     # 单次+累计取样体积不超过工作体积 10%
+
+do_alarm:                           # 答复#7：CHO 高密度（10-25 x10^6）耗氧陡增，报警调灵敏
+  deviation_yellow_points: 10       # DO 低于设定点 10 个百分点（持续判定见下）
+  deviation_yellow_minutes: 15      # 持续 15 分钟报黄
+  deviation_red_minutes: 30         # 持续 30 分钟报红
+  absolute_red_percent: 20          # 绝对红线：DO < 20% 立即报红
+
+metabolite_limits:                  # 答复#10：CHO 低糖限制性补料策略
+  glucose_g_l: { yellow_below: 2.0, red_below: 0.5, target_range: [2.0, 4.0] }   # 黄=提示补糖，红=耗竭，目标 2-4
+  lactate_g_l: { yellow_above: 2.0, red_above: 4.0 }
+  lactate_mw_g_mol: 90.08           # 界面同显 g/L 与 mmol/L：mmol/L = g/L / 90.08 * 1000
+
+harvest_hint:                       # 模块 3 收获建议
+  viability_below_percent: 80       # 活率 < 80% 且密度下降时提示收获
+
+csv_import:                         # 答复#8：先按通用格式写解析器，真实文件到手后替换
+  encoding: "utf-8"
+  delimiter: ","
+  header_row: 1
+  datetime_iso_format: "%Y-%m-%d %H:%M:%S"
+  column_mapping_ui: true           # 第四轮提供"列名映射配置页"，手动对应真实列名
+  simulator_output_marker: "SIMULATED"   # 模拟 CSV 生成脚本输出必须显著标注 SIMULATED，不得混入交付物
+
+setup_sheet_export:                 # 答复#9：不做 PDF，省掉 reportlab
+  clipboard_copy: true
+  txt_file: true
+  pdf: false
+
+storage:                            # 答复#11：模板库
+  engine: "sqlite3"                 # Python 标准库，不新增第三方依赖
+  templates_db_path: "data/templates.db"

@@ -1,0 +1,10 @@
+# Python 依赖清单 — 第一轮仅登记，不安装；第二轮起执行：
+#   pip install -r requirements.txt
+PySide6>=6.6        # 界面框架（选型结论见 docs/技术选型决议.md）
+PyYAML>=6.0        # 读取 config/config.yaml
+pandas>=2.0        # CSV 导入与数据清洗（第四轮）
+numpy>=1.26        # 数值计算
+scipy>=1.11        # 生长曲线拟合（第四轮）
+matplotlib>=3.8    # 图表绘制，嵌入 Qt（第四轮）
+pytest>=8.0        # 单元测试
+# PyInstaller>=6.0 # 第六轮打包 .exe 时再启用
