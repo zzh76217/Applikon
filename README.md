@@ -10,7 +10,8 @@
 - [x] 第三轮：R14–R18 全部落地（校验器 18/18）+ 用户新增需求：②硬件配置页（可改体积上下限/MFC量程/推荐默认值，写回 config.yaml 保留注释）、开机配置单一键导出 CSV（utf-8-sig）+ 一键复制、参数配方保存/调用（data/recipes JSON）；pytest 79 passed；待用户验收（见 docs/第三轮验收说明.md）
 - [x] 第四轮（2026-11-11，按用户指令 = 提示词文档第四轮"校验完善与防呆"）：补充公式展示（N_total、搅拌启动建议转速、γ≈k×N 剪切估算）、k/D 缺参数黄色防御、红色错误一律禁止导出配置单、非法输入全链路不崩溃、提示词文档 2.0 L 算例单元测试；pytest 113 passed；待用户验收（见 docs/第四轮验收说明.md）
 - [x] 第五轮（2026-11-12，用户指令"已关闭，进行第五轮"）：模块 3 离线分析（③页 + CSV 解析器 + ④列名映射页）、模块 4 模板库与多批次对比（⑤页，SQLite）、模块 5 SOP 防呆引导（⑥页，4 阶段 23 项）；界面扩到 6 页；顺手修掉 6 个会让软件起不来/用不了的缺陷；pytest 266 passed；待用户验收（见 docs/第五轮验收说明.md）
-- [ ] 下一轮（第六轮）：PyInstaller 打包成双击可用的 .exe + 中文使用说明；真实 my-Control CSV 到位后在④页对齐列名
+- [x] 第六轮（2026-11-12，用户指令"1234 都按现有设定，确认进入第六轮"）：PyInstaller 打包成双击可用的单文件 .exe（72.6 MB，onefile，含自动释放出厂配置、运行日志、程序图标）+ 中文使用说明.txt；顺手修掉 3 个真机才暴露的缺陷（windowed 下 stderr=None 崩溃、启动失败无弹窗、1280x752 小屏窗口被撑出屏幕）；pytest 360 passed；待用户验收（见 docs/第六轮验收说明.md）
+- [ ] 待用户提供真实 my-Control 导出 CSV 后，在④列名映射页对齐列名并做一次真实数据回归；叶轮直径 D 与叶轮常数 k 待查设备铭牌后填入 config（现仍为 null，走黄色警告）
 
 ## 目录结构
 ```
@@ -18,7 +19,11 @@ D:\Applikon\
 ├── requirements.md            # 需求文档（唯一事实来源）
 ├── AGENTS.md                  # 协作规范
 ├── README.md                  # 本文件
-├── requirements.txt           # Python 依赖清单（第二轮起安装）
+├── requirements.txt           # Python 依赖清单（第二轮起安装；第六轮放开 PyInstaller，移除未使用的 pandas/scipy）
+├── run.py                     # 源码版入口（python run.py）；打包时作为 PyInstaller 主脚本
+├── 启动软件.bat               # 源码版双击启动脚本
+├── assets/
+│   └── app.ico                # 程序图标（tools/make_icon.py 生成，随 exe 内嵌）
 ├── config/
 │   └── config.yaml            # 全部工艺参数与硬件上下限（严禁代码硬编码）
 ├── src/
@@ -26,10 +31,12 @@ D:\Applikon\
 │       ├── core/              # 计算公式、18 条校验、离线分析、列名映射、模板库、SOP
 │       ├── ui/                # PySide6 界面：五大模块页面
 │       └── io_/               # CSV 导入、配置单导出、模板库读写
-├── tests/                     # pytest 单元测试（266 条：第三节公式 + 第五节 18 条规则 + 模块 3/4/5）
-├── tools/                     # 辅助脚本（仅生成带 SIMULATED 标记的演示 CSV，不参与交付）
+├── tests/                     # pytest 单元测试（360 条：第三节公式 + 第五节 18 条规则 + 模块 3/4/5 + 第六轮打包/诊断/整窗冒烟）
+├── tools/                     # 辅助脚本：make_icon.py 生成图标、build_exe.py 打包 exe、make_simulated_csv.py 生成带 SIMULATED 标记的演示 CSV（均不参与交付）
 ├── data/                      # 配方（recipes/）、模板库与用户导入文件存放处（运行时生成，不入 git）
-└── docs/                      # 决策记录与使用说明
+├── logs/                      # 运行日志 软件运行日志.txt（运行时生成，不入 git）
+├── build/  dist/              # 打包中间产物与成品（不入 git，dist 里的 zip 就是发给实验电脑的交付包）
+└── docs/                      # 决策记录、各轮验收说明、使用说明.txt（随交付包一起发）
 ```
 
 ## 第一轮决策记录（2026-11-11，用户答复已全部写入 config.yaml）
@@ -121,3 +128,22 @@ D:\Applikon\
 | 缺陷修复 6 | `core/analysis.py` DO 断档判定写死 0.5 / 1.5 → 外移为 `config.do_alarm.gap_default_hours` / `gap_max_factor`，补 3 条测试；外移前后 ③ 页指标逐位一致 | 满足 AGENTS.md「严禁硬编码」 |
 | 事故登记 | 给 config.yaml 插新键的临时脚本一度误删 `metabolite_limits:` 段头 → 按 `git show HEAD` 逐段比对恢复并回归测试，顶层段与子键零丢失 | 教训：改 config 必须带结构比对，不靠行号 |
 | 新增依赖 | 无（第三方仍只有 PySide6 / PyYAML / pytest / matplotlib，见 requirements.txt） | — |
+
+## 第六轮决策记录（2026-11-12）
+
+| 项目 | 决策 | 依据 / 备注 |
+|------|------|-------------|
+| 打包方式 | PyInstaller **onefile 单文件**（72.6 MB），启动 4–7 秒 | 用户第 5 项拍板"1234 都按现有设定"，onefile 最傻瓜：拷一个 exe + config + 说明书即可；嫌启动慢可 `python tools/build_exe.py --onedir` 改文件夹版 |
+| 配置/数据位置 | 打包版 APP_ROOT = **exe 所在目录**（不是临时解包目录 _MEIPASS） | 否则用户改的 config 会被每次启动的临时解包覆盖，②页"保存并生效"也白做 |
+| 缺配置自愈 | exe 内嵌出厂 config；启动时若同目录 `config\config.yaml` 不存在则**自动释放一份**（实测释放后 SHA256 与工程默认一致）；释放失败（只读目录）退回内置副本继续运行；两者都没有才弹中文"找不到配置文件" | 用户误删 config 也能开机；已实测删除 config 目录后启动成功 |
+| 运行日志 | `logs\软件运行日志.txt`，追加写、超过 5 MB 轮转为 `.old`；文件名/目录名/上限都在 config.app_info | 实验人员排障只需发这一个文件 |
+| 踩坑 1 | `--windowed` 打包后 `sys.stdout/sys.stderr` 为 **None**，任何 `print`/`sys.stderr.write` 直接崩 | 新增 `core/diagnostics.py`：写日志前先判 None；日志设置读 config，读不到才用兜底文件名 |
+| 踩坑 2 | 启动阶段异常原来只写 stderr → 用户看不到任何提示（双击"没反应"） | `main()` 补启动失败弹窗，并把日志路径写进弹窗文字；实测坏 config 会弹「软件启动失败」+ 生成中文堆栈日志 |
+| 踩坑 3 | 真机 1280x752 可用区（3K 屏 225% 缩放）下窗口被撑到 1200x1009，底部按钮和第 6 页签跑到屏幕外 | 三处改动：① `_fit_to_screen()` 按 availableGeometry 收缩；② ② 硬件配置页整体装进 QScrollArea（原来单页 minimumSizeHint 高 918 px）；③ ① 页左侧参数表单也装进 QScrollArea（show 后 minimumSizeHint 高 742 px）+ 底部路径标签开启自动折行（原来一行长路径把最小宽顶到 926 px）。现在整窗 1200x728、最小 693x358，实测 FITS=True |
+| 界面文案入 config | 新增 `app_info.tab_titles`（6 个页签名）与 `title_template`、`locations_template` 等 12 个键；代码里只留兜底默认 | AGENTS.md「严禁硬编码」延伸到界面文字；窄屏可自己改短页签名 |
+| 图标 | `tools/make_icon.py` 用 QPainter 画烧瓶生成 `assets/app.ico`（7 个尺寸），随 exe 内嵌 | 曾踩 `os._exit` 提前退出、`QPolygonF` 点位错误两个坑，已修 |
+| 依赖瘦身 | 打包排除 pandas / scipy / IPython / tkinter / pytest + 20+ 未用 Qt 模块；requirements.txt 移除 pandas、scipy（全项目确认无 import） | exe 从 ~110 MB 降到 72.6 MB |
+| 交付包内容 | `dist\` = exe + `config\config.yaml` + `使用说明.txt` + `data\README.txt` + `本版本信息.txt`（版本号/SHA256/构建时间/用法四行）+ 同名 zip | 打包脚本内置 **SIMULATED 泄漏检查**：交付目录里出现任何含 SIMULATED 的文件即中止 |
+| 中文使用说明 | `docs/使用说明.txt`（270 行 / 10 节：怎么打开、六页干什么、①页照着做、18 项校验颜色含义、③页分析、改配置、数据备份、常见问题 Q1–Q10、术语词典、责任声明） | 纯文本，U+3000 缩进，记事本即开；不做 PDF（答复#9） |
+| 测试 | 新增 94 条（app_info 21 / config_loader 26 / diagnostics 18 / 交付物结构 18 / 整窗冒烟 11），合计 **360 passed** | 期望值仍全部来自 requirements.md 第三节算例与 config.yaml；浮点比较用 pytest.approx |
+| 新增依赖 | PyInstaller 6.22.3（仅开发机用于打包，运行期不需要） | 用户实验电脑无需装 Python |

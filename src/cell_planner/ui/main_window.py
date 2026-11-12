@@ -13,17 +13,19 @@ import sys
 import traceback
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QSplitter,
+    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSplitter,
     QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from cell_planner.core import formulas, recipe_store, sheet_export, validators
-from cell_planner.core.config_loader import PROJECT_ROOT, get_config
+from cell_planner.core.config_loader import PROJECT_ROOT, config_source, get_config
+from cell_planner.core.diagnostics import bundled_asset, log_file, write_diagnostic
+from cell_planner.core import app_info
 from cell_planner.core.config_writer import update_config_file
 from cell_planner.ui.analysis_tab import AnalysisTab
 from cell_planner.ui.mapping_tab import MappingTab
@@ -51,12 +53,20 @@ def _cfg_get(cfg: dict, path: tuple):
     return node
 
 
+# 页签兜底名称：config.app_info.tab_titles 缺失或没写全时按顺序补位（第六轮：窄屏可改短）
+_TAB_FALLBACK_TITLES = (
+    "① 配置与校验", "② 硬件配置", "③ 离线分析",
+    "④ 列名映射", "⑤ 模板库对比", "⑥ SOP 引导",
+)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.cfg = get_config()
-        self.setWindowTitle("细胞培养接种与批次配置规划软件 — 第五轮：离线分析 + 模板库 + SOP 引导")
-        self.resize(1200, 780)
+        self.setWindowTitle(self._window_title())
+        self._fit_to_screen(1200, 780)
+        self._size_clamped_on_show = False   # 第六轮：显示后还要按边框再收一次
         self.widgets = {}
         self.defaults = {}       # key -> 可调用对象，从"当前 config"取默认值（硬件配置页改完即生效）
         self._last = None        # 最近一次 compute() 的结果，供导出/复制使用
@@ -65,26 +75,109 @@ class MainWindow(QMainWindow):
         self._fill_defaults()
         self.compute()
 
-    # ================= 总体布局：两个标签页 =================
+    # ================= 第六轮：窗口标题与文件位置提示（渲染逻辑在 core/app_info.py，可单测） =================
+    def _window_title(self) -> str:
+        mode = "打包版" if getattr(sys, "frozen", False) else "源码版"
+        return app_info.window_title(self.cfg, mode)
+
+    def _locations_text(self) -> str:
+        info = self.cfg.get("app_info") or {}
+        try:
+            data_dir = (PROJECT_ROOT / str(self.cfg["storage"]["templates_db_path"])).parent
+            manual = PROJECT_ROOT / str(info.get("manual_file") or "")
+        except Exception:
+            data_dir = manual = None
+        return app_info.locations_text(
+            self.cfg,
+            config_path=config_source(),
+            data_dir=data_dir,
+            log_path=log_file(),
+            manual_path=manual,
+        )
+
+    def _tab_titles(self) -> list:
+        """页签名称取自 config，缺位用内置兜底名补齐，改错也不影响功能。"""
+        got = app_info.tab_titles(self.cfg, len(_TAB_FALLBACK_TITLES))
+        return [got[i] or _TAB_FALLBACK_TITLES[i] for i in range(len(_TAB_FALLBACK_TITLES))]
+
+    def _fit_to_screen(self, want_w: int, want_h: int) -> None:
+        """窗口尺寸跟着屏幕走：1280x800 / 1366x768 的实验笔记本上，
+        固定 1200x780 会被系统缩放顶出屏幕，底部按钮和第 6 个页签都看不见。"""
+        width, height = want_w, want_h
+        try:
+            geo = QApplication.primaryScreen().availableGeometry()
+            width = max(760, min(want_w, geo.width() - 24))
+            height = max(520, min(want_h, geo.height() - 24))
+        except Exception:
+            pass          # 拿不到屏幕信息就用原始期望尺寸，绝不让主程序崩
+        self.resize(width, height)
+
+    MIN_WIDTH = 760      # 再小就挤坏三区布局（窄屏兜底用）
+    MIN_HEIGHT = 520
+    SCREEN_MARGIN = 8    # 留给任务栏/边缘的余量（像素）
+
+    def _available_geometry(self):
+        """屏幕可用区（已扣任务栏）。拿不到就返回 None，绝不抛异常。"""
+        try:
+            return QApplication.primaryScreen().availableGeometry()
+        except Exception:
+            return None
+
+    def _clamped_size(self, width: int, height: int, avail, frame_w: int, frame_h: int):
+        """纯计算：把客户区尺寸缩到「连标题栏和边框」都落在屏幕可用区内。
+
+        geometry() 不含窗口边框，真机上按可用区缩完仍然会超出十几像素，
+        所以这里用 frameGeometry 的尺寸差（边框厚度）再扣一次。
+        """
+        if avail is None:
+            return width, height
+        extra_w = max(0, frame_w - width)
+        extra_h = max(0, frame_h - height)
+        room_w = avail.width() - 2 * self.SCREEN_MARGIN - extra_w
+        room_h = avail.height() - 2 * self.SCREEN_MARGIN - extra_h
+        # 只缩不涨：窗口本来就比下限小时，不能反过来把用户窗口撑大
+        new_w = min(width, max(self.MIN_WIDTH, room_w))
+        new_h = min(height, max(self.MIN_HEIGHT, room_h))
+        return new_w, new_h
+
+    def showEvent(self, event) -> None:
+        """第一次显示后按真实边框收一次尺寸（只收一次，避免反复抖动）。"""
+        super().showEvent(event)
+        if self._size_clamped_on_show:
+            return
+        self._size_clamped_on_show = True
+        frame = self.frameGeometry()
+        new_w, new_h = self._clamped_size(self.width(), self.height(), self._available_geometry(), frame.width(), frame.height())
+        if (new_w, new_h) != (self.width(), self.height()):
+            self.resize(new_w, new_h)
+
+    # ================= 总体布局：六个标签页（名称来自 config.app_info.tab_titles） =================
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
         self.tabs = QTabWidget()
+        titles = self._tab_titles()
         outer.addWidget(self.tabs, 1)
-        self.tabs.addTab(self._build_planner_tab(), "① 批次配置与校验")
-        self.tabs.addTab(self._build_hardware_tab(), "② 硬件配置")
+        self.tabs.addTab(self._build_planner_tab(), titles[0])
+        self.tabs.addTab(self._build_hardware_tab(), titles[1])
         self.analysis_tab = AnalysisTab(self)
         self.mapping_tab = MappingTab(self)
         self.template_tab = TemplateTab(self)
         self.sop_tab = SopTab(self)
-        self.tabs.addTab(self.analysis_tab, "③ 离线分析")
-        self.tabs.addTab(self.mapping_tab, "④ 列名映射")
-        self.tabs.addTab(self.template_tab, "⑤ 模板库与批次对比")
-        self.tabs.addTab(self.sop_tab, "⑥ SOP 防呆引导")
+        self.tabs.addTab(self.analysis_tab, titles[2])
+        self.tabs.addTab(self.mapping_tab, titles[3])
+        self.tabs.addTab(self.template_tab, titles[4])
+        self.tabs.addTab(self.sop_tab, titles[5])
         tip = QLabel("提醒：计算结果仅供规划参考，正式上机前必须由操作人员人工复核。本软件不连接、不控制 my-Control 硬件。")
         tip.setStyleSheet("color: rgb(176, 0, 0); font-weight: bold;")
         outer.addWidget(tip)
+        loc = QLabel(self._locations_text())
+        loc.setStyleSheet("color: rgb(90, 90, 90);")
+        loc.setTextInteractionFlags(Qt.TextSelectableByMouse)   # 第六轮：路径可全选复制，便于排障
+        loc.setWordWrap(True)          # 第六轮：小屏（1024 宽）下折行，别把窗口最小宽度顶宽
+        self.lbl_locations = loc                                # 第六轮：留出引用，单元测试与后续功能用
+        outer.addWidget(loc)
 
     # ================= 标签页①：批次配置与校验 =================
     def _build_planner_tab(self) -> QWidget:
@@ -120,9 +213,14 @@ class MainWindow(QMainWindow):
         self.btn_recipe_del.clicked.connect(self._recipe_delete)
         self.cmb_recipe.activated.connect(lambda name: self.edit_recipe.setText(name))
 
+        # 小屏适配：参数行多，在高缩放（dpr 2.25）的笔记本上表单本身就有 700+ px 高，
+        # 装进滚动区后整窗最小高才压得下来，底部按钮与第 6 个页签不会被顶出屏幕。
         form_host = QWidget()
         self.form = QFormLayout(form_host)
-        input_lay.addWidget(form_host, 1)
+        self.form_scroll = QScrollArea()
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setWidget(form_host)
+        input_lay.addWidget(self.form_scroll, 1)
         btn_row = QHBoxLayout()
         self.btn_calc = QPushButton("计算并校验")
         self.btn_calc.setDefault(True)
@@ -513,8 +611,17 @@ class MainWindow(QMainWindow):
     ]
 
     def _build_hardware_tab(self) -> QWidget:
+        # 小屏适配：本页控件最多（多组量程 + 默认值/下限/上限表），
+        # 装进滚动区，否则会把整个窗口撑高到屏幕外，底部按钮看不全。
+        host = QWidget()
+        host_lay = QVBoxLayout(host)
+        host_lay.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        host_lay.addWidget(scroll)
         tab = QWidget()
         lay = QVBoxLayout(tab)
+        scroll.setWidget(tab)
         intro = QLabel("在这里修改硬件上下限与推荐参数默认值，点「保存并生效」后写回 config/config.yaml（自动保留注释，并备份为 config.yaml.bak）。\n"
                        "改完回到「① 批次配置与校验」点「恢复默认值」即可套用新默认；所有校验规则会立即使用新阈值。")
         intro.setWordWrap(True)
@@ -571,7 +678,7 @@ class MainWindow(QMainWindow):
         self.btn_hw_save.clicked.connect(self._hw_save)
         self.btn_hw_reload.clicked.connect(self._hw_fill)
         self._hw_fill()
-        return tab
+        return host
 
     def _hw_fill(self) -> None:
         for kind, spec, w in self.hw_widgets:
@@ -652,7 +759,7 @@ def _excepthook(exc_type, exc, tb) -> None:
     """未预期异常也用中文弹窗说明，绝不静默闪退（完整堆栈同时打到控制台便于定位）。"""
     detail = "".join(traceback.format_exception(exc_type, exc, tb)).strip().splitlines()
     last = detail[-1] if detail else str(exc)
-    sys.stderr.write("\n".join(detail) + "\n")
+    write_diagnostic("\n".join(detail), level="异常")
     text = ("软件遇到一个没预料到的问题，已尽量保住界面不闪退。\n\n"
             "出错信息：%s\n\n"
             "你可以：\n"
@@ -668,16 +775,24 @@ def main() -> int:
     """程序入口：双击工程根目录的 启动软件.bat，或在命令行执行  python run.py。"""
     sys.excepthook = _excepthook
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("细胞培养接种与批次配置规划软件")
+    try:
+        from PySide6.QtGui import QIcon
+        app.setApplicationName(str((get_config().get("app_info") or {}).get("name", "")))
+        icon_path = bundled_asset(str((get_config().get("app_info") or {}).get("icon_file", "")))
+        if icon_path:
+            app.setWindowIcon(QIcon(str(icon_path)))
+    except Exception:
+        pass
     try:
         win = MainWindow()
     except Exception as exc:
         detail = traceback.format_exc().strip().splitlines()
-        sys.stderr.write("\n".join(detail) + "\n")
+        log_path = write_diagnostic("\n".join(detail), level="启动失败")
         QMessageBox.critical(
             None, "软件启动失败",
-            "无法启动，多半是 config/config.yaml 有问题或被别的程序占用。\n\n出错信息：%s\n\n"
-            "请把这条信息发给开发者，不要反复双击。" % (detail[-1] if detail else exc,))
+            "无法启动，多半是 config\\config.yaml 有问题、被别的程序占用，或安装位置不可写。\n\n出错信息：%s\n\n"
+            "完整原因已写进日志：%s\n请把这条信息和日志文件一起发给开发者，不要反复双击。"
+            % (detail[-1] if detail else exc, log_path or "（日志文件没能写成功）"))
         return 1
     win.show()
     return app.exec()

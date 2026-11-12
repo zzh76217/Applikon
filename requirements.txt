@@ -1,10 +1,13 @@
-# Python 依赖清单 — 第一轮仅登记，不安装；第二轮起执行：
-#   pip install -r requirements.txt
+# Python 依赖清单
+#   安装：pip install -r requirements.txt
+#   源码运行只需前 5 行；最后一行 PyInstaller 只在第六轮打包 .exe 时才需要。
 PySide6>=6.6        # 界面框架（选型结论见 docs/技术选型决议.md）
 PyYAML>=6.0        # 读取 config/config.yaml
-pandas>=2.0        # CSV 导入与数据清洗（第四轮）
-numpy>=1.26        # 数值计算
-scipy>=1.11        # 生长曲线拟合（第四轮）
-matplotlib>=3.8    # 图表绘制，嵌入 Qt（第四轮）
+numpy>=1.26        # 数值计算（matplotlib 依赖）
+matplotlib>=3.8    # 图表绘制，用 Agg 后端出图（第四、五轮）
 pytest>=8.0        # 单元测试
-# PyInstaller>=6.0 # 第六轮打包 .exe 时再启用
+PyInstaller>=6.0   # 第六轮打包 Windows .exe：python tools/build_exe.py
+
+# 说明：pandas / scipy 本机装了但软件代码从未 import（全项目搜索确认，
+# 解析与拟合全部用标准库实现，numpy 仅作为 matplotlib 的依赖保留），故不列入依赖，
+# tools/build_exe.py 也把它们排除在 exe 之外以压缩体积。
