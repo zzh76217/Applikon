@@ -144,6 +144,7 @@ D:\Applikon\
 | 图标 | `tools/make_icon.py` 用 QPainter 画烧瓶生成 `assets/app.ico`（7 个尺寸），随 exe 内嵌 | 曾踩 `os._exit` 提前退出、`QPolygonF` 点位错误两个坑，已修 |
 | 依赖瘦身 | 打包排除 pandas / scipy / IPython / tkinter / pytest + 20+ 未用 Qt 模块；requirements.txt 移除 pandas、scipy（全项目确认无 import） | exe 从 ~110 MB 降到 72.6 MB |
 | 交付包内容 | `dist\` = exe + `config\config.yaml` + `使用说明.txt` + `data\README.txt` + `本版本信息.txt`（版本号/SHA256/构建时间/用法四行）+ 同名 zip | 打包脚本内置 **SIMULATED 泄漏检查**：交付目录里出现任何含 SIMULATED 的文件即中止 |
-| 中文使用说明 | `docs/使用说明.txt`（270 行 / 10 节：怎么打开、六页干什么、①页照着做、18 项校验颜色含义、③页分析、改配置、数据备份、常见问题 Q1–Q10、术语词典、责任声明） | 纯文本，U+3000 缩进，记事本即开；不做 PDF（答复#9） |
+| 中文使用说明 | `docs/使用说明.txt`（274 行 / 10 节：怎么打开、六页干什么、①页照着做、18 项校验颜色含义、③页分析、改配置、数据备份、常见问题 Q1–Q10、术语词典、责任声明） | 纯文本，U+3000 缩进，记事本即开；不做 PDF（答复#9） |
+| 全新解压复验 + 说明书补注 | 从交付 zip 解压到临时目录 → 删 `config\`、`logs\` → 双击 exe：6.1 秒出窗口、config 自动释放且 SHA256 与工程默认一致、`data\templates.db` 自动新建、窗口 2728x1670 六页签全可见；据此在说明书第 7 节与 Q1 补两句（运行日志只在警告/报错时创建，平时没有该文件属正常），并重建 zip | exe 未重新编译，SHA256 不变 `003e5c3d…b9173`；复验细节见 `docs/第六轮验收说明.md` 第 4.4 节 |
 | 测试 | 新增 94 条（app_info 21 / config_loader 26 / diagnostics 18 / 交付物结构 18 / 整窗冒烟 11），合计 **360 passed** | 期望值仍全部来自 requirements.md 第三节算例与 config.yaml；浮点比较用 pytest.approx |
 | 新增依赖 | PyInstaller 6.22.3（仅开发机用于打包，运行期不需要） | 用户实验电脑无需装 Python |
