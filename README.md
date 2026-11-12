@@ -9,9 +9,8 @@
 - [x] 第二轮（业务）：最小单页版已交付——三区界面 + 公式1–5 + R01–R13；用户已验收通过（2026-11-11，回复"无误"）
 - [x] 第三轮：R14–R18 全部落地（校验器 18/18）+ 用户新增需求：②硬件配置页（可改体积上下限/MFC量程/推荐默认值，写回 config.yaml 保留注释）、开机配置单一键导出 CSV（utf-8-sig）+ 一键复制、参数配方保存/调用（data/recipes JSON）；pytest 79 passed；待用户验收（见 docs/第三轮验收说明.md）
 - [x] 第四轮（2026-11-11，按用户指令 = 提示词文档第四轮"校验完善与防呆"）：补充公式展示（N_total、搅拌启动建议转速、γ≈k×N 剪切估算）、k/D 缺参数黄色防御、红色错误一律禁止导出配置单、非法输入全链路不崩溃、提示词文档 2.0 L 算例单元测试；pytest 113 passed；待用户验收（见 docs/第四轮验收说明.md）
-- [ ] 下一轮：模块 3 离线分析与 CSV 导入（列名映射配置页 + 标注 SIMULATED 的模拟数据脚本；真实 CSV 等用户上机导出）
-- [ ] 再下一轮：模块 4 模板库（SQLite，多批次对比；轻量"参数配方"已在第三轮提前交付）+ 模块 5 SOP 引导
-- [ ] 最后一轮：打包 Windows .exe + 中文使用说明
+- [x] 第五轮（2026-11-12，用户指令"已关闭，进行第五轮"）：模块 3 离线分析（③页 + CSV 解析器 + ④列名映射页）、模块 4 模板库与多批次对比（⑤页，SQLite）、模块 5 SOP 防呆引导（⑥页，4 阶段 23 项）；界面扩到 6 页；顺手修掉 6 个会让软件起不来/用不了的缺陷；pytest 266 passed；待用户验收（见 docs/第五轮验收说明.md）
+- [ ] 下一轮（第六轮）：PyInstaller 打包成双击可用的 .exe + 中文使用说明；真实 my-Control CSV 到位后在④页对齐列名
 
 ## 目录结构
 ```
@@ -24,10 +23,11 @@ D:\Applikon\
 │   └── config.yaml            # 全部工艺参数与硬件上下限（严禁代码硬编码）
 ├── src/
 │   └── cell_planner/
-│       ├── core/              # 计算公式（第二轮）与校验规则（第三轮）
+│       ├── core/              # 计算公式、18 条校验、离线分析、列名映射、模板库、SOP
 │       ├── ui/                # PySide6 界面：五大模块页面
 │       └── io_/               # CSV 导入、配置单导出、模板库读写
-├── tests/                     # pytest 单元测试（覆盖第三节公式 + 第五节 18 条规则）
+├── tests/                     # pytest 单元测试（266 条：第三节公式 + 第五节 18 条规则 + 模块 3/4/5）
+├── tools/                     # 辅助脚本（仅生成带 SIMULATED 标记的演示 CSV，不参与交付）
 ├── data/                      # 配方（recipes/）、模板库与用户导入文件存放处（运行时生成，不入 git）
 └── docs/                      # 决策记录与使用说明
 ```
@@ -97,3 +97,27 @@ D:\Applikon\
 | 备份 | 细胞培养接种与批次配置规划软件_Codex开发提示词_备份_原笔误.docx（写回前生成，与原文件 SHA-256 一致，要求②） |
 | 代码与测试 | 未改动任何代码与测试期望值，维持 800 × 10⁶ cells 的物理正确实现（要求③） |
 | 备注 | 写回曾因 Word 占用被安全拒绝（脚本检测到占用即放弃写入），用户关闭 Word 后重试成功；临时脚本已删除 |
+
+## 第五轮决策记录（2026-11-12）
+
+| 项目 | 决策 | 依据 / 备注 |
+|------|------|-------------|
+| 本轮范围 | ③离线分析 + ④列名映射 + ⑤模板库与批次对比 + ⑥SOP 引导，界面由 2 页扩到 6 页 | 需求文档模块 3/4/5；打包留到第六轮 |
+| ②页联动 | 硬件配置"保存并生效"后，③④⑤⑥ 页跟随刷新（量程、上限、默认值、SOP 条目、对比字段） | 保证"阈值只在 config"这条硬约束真的生效 |
+| 缺陷修复 1 | `core/template_store.py` 三条建表 SQL 缺分号 → `executescript` 语法错，⑤页首次使用即失败 | 已补分号并加测试 |
+| 缺陷修复 2 | `ui/common.py` 误用 `setEditBehavior()`（Qt 无此方法）→ 任何表格创建即 AttributeError | 改为 `setEditTriggers(QAbstractItemView.NoEditTriggers)` |
+| 缺陷修复 3 | `ui/chart_view.py` 向 `QLabel.setAlignment()` / `QPixmap.scaled()` 传裸整数 | 改用 `Qt.AlignHCenter|Qt.AlignVCenter`、`Qt.KeepAspectRatio`、`Qt.SmoothTransformation` |
+| 缺陷修复 4 | `ui/main_window.py` 缺 `main()` → `run.py` 与 `启动软件.bat` 必 ImportError | 已补 `main()` 与全局异常钩子（未捕获异常弹中文窗口，不闪退） |
+| 缺陷修复 5 | `core/sop_checklist.py` 的 `_cfg()` 空值回退写反 → ②页改配置不反映到 SOP 页 | 改为仅在 `cfg is None` 时回退全局 |
+| 模拟数据 | 生成器移入包内 `io_/simulator.py`，`tools/make_simulated_csv.py` 改为薄壳；输出目录 `data/simulated/` 已加入 `.gitignore` | 答复#8：必须显著标注 SIMULATED 且不得混入交付物 |
+| 新增 config 键 | `analysis.report_title`、`analysis.report_export.csv_encoding`、`column_mapping.*`、`unit_constants.glucose_mw_g_mol=180.16`、`metabolite_limits.lactate_mw_g_mol=90.08`、`template_library.*`、`sop.*` | 全部阈值/字段/SOP 文字集中于此，代码零硬编码 |
+| SOP 闸门默认值 | `sop.require_all_checked_for_export: false` —— 未勾满仍可导出确认单，但未勾条目逐条标"未确认"并弹窗提示 | 若你要"必须 23 项全勾"，把该值改 true 即可（无需改代码） |
+| 图表方案 | matplotlib 仅用 Agg 后端出 PNG 字节交给 QLabel，失败降级为一行中文提示 | 不引入第二套 GUI 后端，不与 PySide6 抢事件循环；坐标轴用英文避免中文字形缺失 |
+| 模板库 | SQLite（标准库 sqlite3），库文件 `data/templates.db`，首次使用自动建表，不入 git | 答复#11 |
+| 批次对比 | 10 项指标（清单在 `template_library.compare_fields`），<2 个批次给中文提示不崩溃；SIMULATED 批次行标黄并附警示 | 答复#8 |
+| 测试 | 新增 153 条（analysis 52 / csv_reader 40 / column_mapping 25 / sop 12 / template_store 12 / simulated 12），合计 266 passed | 期望值全部来自 requirements.md 第三节算例与 config.yaml；浮点比较用 `pytest.approx` |
+| 冒烟 | 一次性离屏整窗冒烟脚本（6 页 + 关键动作）通过后已删除，未入库 | 与第二~四轮做法一致，避免仓库里留临时件 |
+| 仍为 null 的参数 | `mixing_physics.impeller_diameter_m`、`impeller_constant_k` | ε 与 γ≈k×N 继续走"缺参数→黄色警告"（答复#2、#3），代码接口已留 |
+| 缺陷修复 6 | `core/analysis.py` DO 断档判定写死 0.5 / 1.5 → 外移为 `config.do_alarm.gap_default_hours` / `gap_max_factor`，补 3 条测试；外移前后 ③ 页指标逐位一致 | 满足 AGENTS.md「严禁硬编码」 |
+| 事故登记 | 给 config.yaml 插新键的临时脚本一度误删 `metabolite_limits:` 段头 → 按 `git show HEAD` 逐段比对恢复并回归测试，顶层段与子键零丢失 | 教训：改 config 必须带结构比对，不靠行号 |
+| 新增依赖 | 无（第三方仍只有 PySide6 / PyYAML / pytest / matplotlib，见 requirements.txt） | — |

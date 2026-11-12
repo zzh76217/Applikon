@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""主窗口（第四轮）：两个标签页。
-补充公式展示（N_total / 搅拌启动建议 / 剪切速率 γ）与"红色错误禁止导出配置单"红线在第四轮加入。
-① 批次配置与校验：左侧"参数输入区"，右上"计算结果区"，右下"校验提示区"（R01-R18 全部 18 条）；
-   新增配方保存/调用、开机配置单导出 CSV、一键复制。
-② 硬件配置：修改体积上下限、MFC 量程与推荐参数默认值，写回 config/config.yaml（保留全部注释，
-   写入前自动备份 config.yaml.bak）。
-启动：双击工程根目录 启动软件.bat，或命令行 python run.py。"""
+"""主窗口（第五轮）：六个标签页。
+① 批次配置与校验：参数输入区 / 计算结果区 / 校验提示区（R01-R18 全部 18 条）+ 配方 + 开机配置单导出。
+② 硬件配置：改体积上下限、MFC 量程与推荐默认值，写回 config/config.yaml（保留注释，先备份 .bak）。
+③ 离线分析：导入 my-Control 控制数据 CSV + 离线取样 CSV，生长曲线/μ、糖乳酸警戒、DO 偏差、收获建议、报告导出。
+④ 列名映射：把逻辑字段对应到真实导出文件的列名（答复#8），存成 data/column_mapping.json。
+⑤ 模板库与批次对比：实验方案模板（SQLite，答复#11）+ 多批次关键参数对比。
+⑥ SOP 防呆引导：按 config.sop.stages 逐条勾选确认，可复制或导出确认单。
+所有阈值/上下限/条目文字均来自 config，界面不硬编码；启动：双击 启动软件.bat 或命令行 python run.py。"""
 from __future__ import annotations
 
+import sys
+import traceback
 from datetime import datetime
 
 from PySide6.QtCore import Qt
@@ -22,6 +25,10 @@ from PySide6.QtWidgets import (
 from cell_planner.core import formulas, recipe_store, sheet_export, validators
 from cell_planner.core.config_loader import PROJECT_ROOT, get_config
 from cell_planner.core.config_writer import update_config_file
+from cell_planner.ui.analysis_tab import AnalysisTab
+from cell_planner.ui.mapping_tab import MappingTab
+from cell_planner.ui.sop_tab import SopTab
+from cell_planner.ui.template_tab import TemplateTab
 
 _LEVEL_BG = {
     validators.LEVEL_PASS: QColor(227, 244, 227),
@@ -48,11 +55,12 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.cfg = get_config()
-        self.setWindowTitle("细胞培养接种与批次配置规划软件 — 第四轮：18 条校验 + 剪切估算 + 防呆导出 + 配方")
+        self.setWindowTitle("细胞培养接种与批次配置规划软件 — 第五轮：离线分析 + 模板库 + SOP 引导")
         self.resize(1200, 780)
         self.widgets = {}
         self.defaults = {}       # key -> 可调用对象，从"当前 config"取默认值（硬件配置页改完即生效）
         self._last = None        # 最近一次 compute() 的结果，供导出/复制使用
+        self.last_analysis = None   # ③页最近一次分析结果，供⑤页提示用
         self._build_ui()
         self._fill_defaults()
         self.compute()
@@ -66,6 +74,14 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.tabs, 1)
         self.tabs.addTab(self._build_planner_tab(), "① 批次配置与校验")
         self.tabs.addTab(self._build_hardware_tab(), "② 硬件配置")
+        self.analysis_tab = AnalysisTab(self)
+        self.mapping_tab = MappingTab(self)
+        self.template_tab = TemplateTab(self)
+        self.sop_tab = SopTab(self)
+        self.tabs.addTab(self.analysis_tab, "③ 离线分析")
+        self.tabs.addTab(self.mapping_tab, "④ 列名映射")
+        self.tabs.addTab(self.template_tab, "⑤ 模板库与批次对比")
+        self.tabs.addTab(self.sop_tab, "⑥ SOP 防呆引导")
         tip = QLabel("提醒：计算结果仅供规划参考，正式上机前必须由操作人员人工复核。本软件不连接、不控制 my-Control 硬件。")
         tip.setStyleSheet("color: rgb(176, 0, 0); font-weight: bold;")
         outer.addWidget(tip)
@@ -590,6 +606,19 @@ class MainWindow(QMainWindow):
             errors.append("最小工作体积 %s mL 必须小于最大工作体积 %s mL。" % (_fmt(hw), _fmt(hx)))
         return updates, errors
 
+    def _refresh_extra_tabs(self) -> None:
+        """②页写回 config 后，让③④⑤⑥页重读阈值/映射/条目，避免新旧参数打架。
+        单个页面刷新失败不影响其他页面，问题汇总后由调用方显示。"""
+        targets = ((self.analysis_tab, "_refresh_cfg"), (self.mapping_tab, "_refresh_cfg"),
+                   (self.template_tab, "refresh_cfg"), (self.sop_tab, "refresh_cfg"))
+        problems = []
+        for widget, method in targets:
+            try:
+                getattr(widget, method)()
+            except Exception as exc:                  # 某页刷新失败不能连累已保存的配置
+                problems.append("%s：%s" % (type(exc).__name__, exc))
+        return problems
+
     def _hw_save(self) -> None:
         updates, errors = self._hw_collect_updates()
         if errors:
@@ -608,6 +637,51 @@ class MainWindow(QMainWindow):
             return
         self.cfg = get_config()
         self._hw_fill()
+        problems = self._refresh_extra_tabs()
+        if problems:
+            QMessageBox.warning(self, "部分页面未刷新",
+                                "配置已保存成功，但下面这些页面没能跟着刷新（不影响 config 内容）：\n· "
+                                + "\n· ".join(problems))
         self.lbl_hw_status.setText("✅ %s 已保存并立即生效（共 %d 项）。旧配置备份：config/config.yaml.bak" % (
             datetime.now().strftime("%H:%M:%S"), len(updates)))
         QMessageBox.information(self, "保存成功", "硬件配置已写回 config.yaml 并立即生效。\n如需让输入框恢复新默认值，请回到①页点「恢复默认值」。")
+
+
+
+def _excepthook(exc_type, exc, tb) -> None:
+    """未预期异常也用中文弹窗说明，绝不静默闪退（完整堆栈同时打到控制台便于定位）。"""
+    detail = "".join(traceback.format_exception(exc_type, exc, tb)).strip().splitlines()
+    last = detail[-1] if detail else str(exc)
+    sys.stderr.write("\n".join(detail) + "\n")
+    text = ("软件遇到一个没预料到的问题，已尽量保住界面不闪退。\n\n"
+            "出错信息：%s\n\n"
+            "你可以：\n"
+            "1) 点「确定」后继续使用其他功能；\n"
+            "2) 若反复出现，请截图本窗口并联系开发者（配置文件与数据文件不会被改动）。" % last)
+    try:
+        QMessageBox.warning(None, "软件遇到问题", text)
+    except Exception:
+        pass
+
+
+def main() -> int:
+    """程序入口：双击工程根目录的 启动软件.bat，或在命令行执行  python run.py。"""
+    sys.excepthook = _excepthook
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("细胞培养接种与批次配置规划软件")
+    try:
+        win = MainWindow()
+    except Exception as exc:
+        detail = traceback.format_exc().strip().splitlines()
+        sys.stderr.write("\n".join(detail) + "\n")
+        QMessageBox.critical(
+            None, "软件启动失败",
+            "无法启动，多半是 config/config.yaml 有问题或被别的程序占用。\n\n出错信息：%s\n\n"
+            "请把这条信息发给开发者，不要反复双击。" % (detail[-1] if detail else exc,))
+        return 1
+    win.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

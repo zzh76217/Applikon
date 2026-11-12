@@ -13,3 +13,5 @@ data/recipes/
 ~$*
 config/*.bak
 /开机配置单_*.csv
+# 第五轮：模拟测试数据（答复#8，严禁混入交付物）
+data/simulated/

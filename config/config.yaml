@@ -102,6 +102,8 @@ do_alarm:                           # 答复#7：CHO 高密度（10-25 x10^6）�
   deviation_yellow_minutes: 15      # 持续 15 分钟报黄
   deviation_red_minutes: 30         # 持续 30 分钟报红
   absolute_red_percent: 20          # 绝对红线：DO < 20% 立即报红
+  gap_default_hours: 0.5            # 兜底取样间隔（小时）：数据里推不出取样节奏时使用
+  gap_max_factor: 1.5               # 断档判定倍数：间隔 > 中位取样间隔×此倍数 时，DO 事件在此处断开、时长不再累计
 
 metabolite_limits:                  # 答复#10：CHO 低糖限制性补料策略（第四轮使用）
   glucose_g_l: { yellow_below: 2.0, red_below: 0.5, target_range: [2.0, 4.0] }   # 黄=提示补糖，红=耗竭，目标 2-4
@@ -116,6 +118,10 @@ csv_import:                         # 答复#8：先按通用格式写解析器�
   delimiter: ","
   header_row: 1
   datetime_iso_format: "%Y-%m-%d %H:%M:%S"
+  encoding_fallbacks: ["utf-8-sig", "gb18030"]   # 第五轮：文件不是首选 UTF-8 时的技术兜底顺序（首选不变），并给中文提示
+  time_format_fallbacks: ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M"]   # 第五轮：ISO 时间的常见等价写法
+  numeric_time_allowed: true                     # 第五轮：时间列完全无法按时间解析时，允许当作"数值=相对小时"兜底（给警告）
+  max_rows: 200000                               # 第五轮：单次导入行数上限，超出即拒绝并提示先在 Web UI 里筛掉无关时间段
   column_mapping_ui: true           # 第四轮提供"列名映射配置页"，手动对应真实列名
   simulator_output_marker: "SIMULATED"   # 模拟 CSV 生成脚本输出必须显著标注 SIMULATED，不得混入交付物
 
@@ -153,3 +159,188 @@ ui_defaults:                        # 第二轮新增：界面初始值集中管
   expression_temp_enabled: false    # 默认不启用表达阶段降温
   cell_line_name: "CHO-DG44"        # 细胞株初始文本
   medium_type: "CD 化学限定培养基"  # 培养基类型初始文本
+# =============================================================
+# 第五轮新增（2026-11-11）：模块 3 离线分析 + 列名映射页 + 模块 4 SQLite 模板库 + 模拟数据生成器
+# 依据：用户第一轮答复 #7 / #8 / #10 / #11，requirements.md 第四节 模块 3 与模块 4
+# 说明：报警阈值仍集中在 do_alarm / metabolite_limits / harvest_hint；下面 analysis 段只放"算法怎么算"的参数
+# =============================================================
+
+column_mapping:                        # 答复#8：拿到真实导出文件后，在"列名映射"页手动对应列名
+  mapping_file: "data/column_mapping.json"     # 手动映射结果存这里（data 下，不进 git）
+  auto_match_case_sensitive: false     # 自动匹配时忽略大小写与多余空格
+  logical_fields:                      # 逻辑字段清单；dataset=control 控制数据 / offline 离线取样 / both 两者都要
+    - key: time
+      label: "时间戳"
+      unit: "YYYY-MM-DD HH:MM:SS"
+      dataset: "both"
+      required: true
+      candidates: ["time", "timestamp", "datetime", "date_time", "date", "sample time", "run time", "time [h]", "时间", "采样时间", "运行时间"]
+    - key: temperature_c
+      label: "温度"
+      unit: "°C"
+      dataset: "control"
+      required: false
+      candidates: ["temperature", "temp", "temp [c]", "t [c]", "temperature_c", "temp_c", "温度"]
+    - key: ph
+      label: "pH"
+      unit: ""
+      dataset: "control"
+      required: false
+      candidates: ["ph", "ph value", "ph_measure", "ph 值"]
+    - key: do_percent
+      label: "DO 溶解氧"
+      unit: "%"
+      dataset: "control"
+      required: true
+      candidates: ["do", "do [%]", "do_percent", "do_value", "oxygen", "po2", "溶氧", "溶解氧"]
+    - key: agitation_rpm
+      label: "搅拌转速"
+      unit: "rpm"
+      dataset: "control"
+      required: false
+      candidates: ["rpm", "agitation", "agitation rpm", "stirrer", "stirrer speed", "impeller rpm", "搅拌", "搅拌转速"]
+    - key: air_ml_min
+      label: "Air 流量"
+      unit: "mL/min"
+      dataset: "control"
+      required: false
+      candidates: ["air", "air flow", "air_ml_min", "air flow ml/min", "mfc air", "gas flow", "空气流量"]
+    - key: o2_ml_min
+      label: "O2 流量"
+      unit: "mL/min"
+      dataset: "control"
+      required: false
+      candidates: ["o2", "o2 flow", "o2_ml_min", "oxygen flow", "mfc o2", "氧气流量"]
+    - key: co2_ml_min
+      label: "CO2 流量"
+      unit: "mL/min"
+      dataset: "control"
+      required: false
+      candidates: ["co2", "co2 flow", "co2_ml_min", "carbon dioxide flow", "mfc co2", "二氧化碳流量"]
+    - key: cell_density_mcells_ml
+      label: "细胞密度（离线计数）"
+      unit: "×10⁶ cells/mL"
+      dataset: "offline"
+      required: true
+      candidates: ["cells", "cell density", "celldensity", "vcd", "x10^6 cells/ml", "cells ml", "cell count", "密度", "细胞密度", "细胞浓度"]
+    - key: viability_percent
+      label: "细胞活率"
+      unit: "%"
+      dataset: "offline"
+      required: false
+      candidates: ["viability", "via", "live", "live cells percent", "viable", "活率", "存活率"]
+    - key: glucose_g_l
+      label: "葡萄糖"
+      unit: "g/L"
+      dataset: "offline"
+      required: false
+      candidates: ["glucose", "glc", "glucose g/l", "glc g/l", "葡萄糖"]
+    - key: lactate_g_l
+      label: "乳酸"
+      unit: "g/L"
+      dataset: "offline"
+      required: false
+      candidates: ["lactate", "lac", "lactate g/l", "lac g/l", "lactic acid", "乳酸"]
+
+unit_constants:                        # 单位换算用的化学常数（不是工艺阈值，故与 metabolite_limits 分开登记）
+  glucose_mw_g_mol: 180.16             # 葡萄糖分子量；乳酸分子量沿用 metabolite_limits.lactate_mw_g_mol = 90.08（答复#10），不重复定义
+
+analysis:                              # 模块 3 分析算法参数
+  time_axis_unit: "h"                  # 分析内部时间轴统一用"小时"（由时间戳差值换算）
+  growth_fit_min_points: 3             # 密度上升段少于 3 个点时不做 ln X 对 t 的线性回归（逐段 μ 仍可计算，公式 6）
+  exponential_rate_tolerance: 0.8   # 第五轮：指数期窗口判定的无量纲容差（瞬时生长率 >= 0.8 x 最大瞬时生长率），算法参数不是工艺阈值
+  do_extrapolation:
+    lookback_hours: 6.0                # DO 消耗速率外推的回溯窗口（仅信息展示，红黄判定仍由 do_alarm 负责）
+    min_points: 3                      # 窗口内少于 3 个点则不外推
+  report_title: "CHO 细胞批次离线分析报告"   # 导出分析报告 CSV 的标题行
+  report_export:
+    csv_encoding: "utf-8-sig"          # 分析报告 CSV 编码，与开机配置单一致（Excel/WPS 双击不乱码）
+
+template_library:                      # 模块 4：SQLite 模板库（答复#11）
+  db_path_key: "storage.templates_db_path"   # 库文件路径只从 storage 段读取，避免两处配置打架
+  setup_template_kind: "批次配置模板"
+  compare_fields:                      # "多批次关键参数对比"表格展示的摘要字段（来自分析摘要的 key）
+    - { key: peak_density_mcells_ml, label: "峰值细胞密度 (×10⁶ cells/mL)" }
+    - { key: peak_viability_percent, label: "峰值活率 (%)" }
+    - { key: mu_max_per_day, label: "最大比生长速率 μ (1/天)" }
+    - { key: doubling_time_hours, label: "倍增时间 (小时)" }
+    - { key: glucose_min_g_l, label: "葡萄糖最低 (g/L)" }
+    - { key: lactate_max_g_l, label: "乳酸最高 (g/L)" }
+    - { key: do_yellow_minutes, label: "DO 偏差累计时长 (分钟)" }
+    - { key: n_do_alarms, label: "DO 报警事件数" }
+    - { key: days_observed, label: "数据覆盖天数" }
+    - { key: is_simulated, label: "是否模拟数据" }
+
+simulation:                            # tools/make_simulated_csv.py 的默认参数（仅用于构造测试数据，非工艺推荐值）
+  out_dir: "data/simulated"
+  filename_prefix: "SIMULATED"         # 答复#8：文件名与每行标记列都要显式标注 SIMULATED，不得混入交付物
+  marker_column: "data_source"
+  marker_value: "SIMULATED"
+  control_interval_minutes: 5
+  offline_interval_days: 1.0
+  days: 10
+  initial_density_mcells_ml: 0.4       # 与 requirements 3.1/3.3 算例的目标接种密度 0.4×10⁶ cells/mL 一致
+  mu_max_per_day: 0.5                  # 测试构造值，用于验证公式 6 的回归能拟合出来
+  peak_density_mcells_ml: 20.0         # 测试构造值（答复#7：CHO 高密度可达 10-25×10⁶，取区间内整数）
+  decline_days_after_peak: 3
+  viability_start_percent: 99.0
+  viability_end_percent: 65.0          # 测试构造值：让收获提示（活率 <80%）在末段被触发
+  glucose_start_g_l: 8.0
+  glucose_end_g_l: 0.3                 # 测试构造值：跨越 metabolite_limits 黄线 2.0 与红线 0.5
+  lactate_start_g_l: 0.5
+  lactate_end_g_l: 4.6                 # 测试构造值：跨越黄线 2.0 与红线 4.0
+  do_dip_yellow_start_hours: 48
+  do_dip_yellow_minutes: 20            # 构造"低于设定点 10 个百分点持续 20 分钟"→ 应报黄（阈值 15/30 分钟）
+  do_dip_red_start_hours: 72
+  do_dip_red_minutes: 40               # 构造"持续 40 分钟"→ 应报红
+  do_absolute_red_start_hours: 96
+  do_absolute_red_minutes: 10          # 构造"DO < 20% 持续 10 分钟"→ 应立即报红
+  columns:                               # 模拟 CSV 的表头列名（放 config 便于将来对齐真实导出格式）
+    control: ["time", "temperature_c", "ph", "do_percent", "agitation_rpm", "air_ml_min", "o2_ml_min", "co2_ml_min", "data_source"]
+    offline: ["time", "cell_density_mcells_ml", "viability_percent", "glucose_g_l", "lactate_g_l", "data_source"]
+
+# =============================================================
+# 第五轮新增（2026-11-11）：模块 5 SOP 防呆引导（requirements.md 第四节 模块 5 / 第七节"第五轮"）
+# 检查条目全部集中在这里，界面按此渲染；严禁把条目文字写进代码。
+# =============================================================
+sop:
+  require_all_checked_for_export: false   # false=未全部勾选也能导出确认单（但逐条标注"未确认"）；true=禁止导出
+  reset_on_new_batch: true                # 每次开机重新勾选，不允许沿用上一批次的勾选状态
+  export:
+    csv_encoding: "utf-8-sig"             # 与开机配置单一致，Excel/WPS 双击不乱码
+  stages:
+    - key: pre_sterilization
+      name: "高压灭菌前"
+      items:
+        - "确认反应器型号与工作体积设定在最小/最大工作体积允许区间内（对应 R01）"
+        - "罐体、盖板、Marine 叶轮、O 形圈齐全，无裂纹/变形/老化"
+        - "曝气头为烧结（约 15 um）型式，禁止使用 L 型管直吹（对应 R16）"
+        - "温度/pH/DO 电极已校准，电缆与接头无损、编号对得上"
+        - "培养基、碱液、消泡剂按本软件开机配置单量好并挂标签"
+        - "气路连接正确：Air 接空压机、O2 与 CO2 接对应 MFC，通气检漏无泄漏"
+    - key: before_inoculation
+      name: "接种前"
+      items:
+        - "灭菌循环参数（温度/时间）与灭菌记录已复核并签字"
+        - "反应器已平衡：温度、pH、DO、搅拌转速均达到设定点并稳定"
+        - "种子液活率与密度已计数，CD_seed > 目标接种密度（对应 R15）"
+        - "接种体积 V_seed 按本软件公式 1 计算，并由第二人复核"
+        - "接种口按 SOP 消毒，操作在火焰旁或无菌转移接口（Biorouter）下完成"
+        - "累计取样体积计划不超过工作体积的规定比例（对应 R17）"
+    - key: running
+      name: "运行中"
+      items:
+        - "每天记录细胞密度、活率、葡萄糖、乳酸，并对照本软件的黄/红警戒线"
+        - "DO 持续低于设定点报警阈值时，按提示检查搅拌转速、通气量与种子密度"
+        - "观察泡沫高度与消泡剂用量，防止泡沫顶罐或消泡剂过量"
+        - "pH 漂移异常时先核对 CO2 配比与碱泵流量，再考虑改设定点"
+        - "取样后及时补液，并把每次取样量记入台账（供 R17 累计校验）"
+        - "任何手动改动 MFC/转速前，回到①页重算并校验，禁止凭经验直接改"
+    - key: harvest
+      name: "收获"
+      items:
+        - "达到目标培养天数，或本软件③页给出『建议收获』提示（活率低于阈值且密度下降）"
+        - "收获前最后一次取样数据完整，已导出 CSV 并在③页做完离线分析"
+        - "收获体积、细胞总数、活率、产物滴度记录进批次台账"
+        - "按 SOP 完成罐体初洗、电极保护液加注与可拆卸部件检查"
+        - "在⑤模板库页把本批次分析结果保存为批次记录，便于多批次对比"
