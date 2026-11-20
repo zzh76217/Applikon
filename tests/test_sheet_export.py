@@ -108,8 +108,9 @@ class TestRound4Rows:
         assert "8.0×10⁸" in r[4]
 
     def test_agitation_suggestion_row_2000ml(self):
+        """封版轮拍板#2（方案 A）把 >1.8 L 段的起步建议从 120 rpm 下调为 80 rpm（2.0 L 时 ε≈0.039 落在推荐区）。"""
         rows, _ = self._rows_for()
-        assert row_of(rows, "搅拌启动建议转速")[2] == "120"
+        assert row_of(rows, "搅拌启动建议转速")[2] == "80"
 
     def test_shear_row_defends_missing_k(self):
         mp = CFG["mixing_physics"]

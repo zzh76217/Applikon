@@ -4,7 +4,10 @@
 期望的 级别（通过/警告/错误）取自 requirements.md 第五节规则表的"级别"列。
 第四轮追加：R06 非法体积/非法直径防护与"极端输入 18 条全跑不崩溃"测试。
 第八轮（2026-11-20）：用户查定叶轮直径 D = 0.052 m 写入 config，R06 从"缺参数固定黄"
-变成真实 ε 判定；"D 为 null 走黄色防御分支"改为显式注入 null 复现，防御路径不得失守。"""
+变成真实 ε 判定；"D 为 null 走黄色防御分支"改为显式注入 null 复现，防御路径不得失守。
+封版轮（2026-11-20 续）：R05 下限 80→60 并改三档（红拦/黄提示/绿通过），小体积段在 R05 里
+并列显示 R06 红线反解出的转速事实上限；补充公式 B 分档 80/100/120→60/70/80；
+R06 在推荐区上限~黄线之间的文案更正为「高于推荐区上限但未达黄线」。"""
 import copy
 import math
 
@@ -160,6 +163,31 @@ class TestR06WithFactoryDiameter:
         for token in ("0.1", "0.05", "0.02", "0.04"):
             assert token in r.message, "R06 文案缺少阈值参照 " + token
 
+    def test_wording_between_recommended_and_yellow_is_corrected(self):
+        """封版轮拍板#4：0.04 < ε ≤ 0.05 这段判绿，但文案不得再写成"低于推荐区"（原为反话）。
+        转速由该区间中点反解得到，不在测试里写死。"""
+        mp = CFG["mixing_physics"]
+        rec_hi, yellow = mp["epsilon_recommended_w_kg"][1], mp["epsilon_yellow_w_kg"]
+        mid = (rec_hi + yellow) / 2.0
+        v_ml = 2000.0
+        # 反解公式：ε = Np·N³·D⁵ ÷ V(m³)，体积必须用 m³
+        rpm = (60.0 / (2.0 * math.pi)) * ((mid * v_ml / 1e6) / (mp["power_number_np"] * mp["impeller_diameter_m"] ** 5)) ** (1.0 / 3.0)
+        eps = self._hand_eps(rpm, v_ml)
+        assert rec_hi < eps <= yellow, "取样点必须落在推荐区上限与黄线之间，ε=%.4f" % eps
+        r = run_one("R06", make_inputs(rpm=rpm))
+        assert r.level == validators.LEVEL_PASS
+        assert "高于推荐区上限但未达黄线" in r.message, r.message
+        assert "低于推荐区" not in r.message, r.message
+
+    def test_wording_below_recommended_keeps_low_note_and_no_zero_display(self):
+        """低于推荐区仍写"低于推荐区"；ε < 0.01 W/kg 不得显示成 0（封版轮修的显示瑕疵）。"""
+        r = run_one("R06", make_inputs(rpm=40.0))
+        assert r.level == validators.LEVEL_PASS
+        assert "低于推荐区" in r.message, r.message
+        assert "高于推荐区上限" not in r.message
+        assert "ε ≈ 0 W/kg" not in r.message, "极小 ε 不能显示为 0"
+        assert "ε ≈ 0.005" in r.message, r.message
+
 
 class TestR01:
     def test_below_min_error(self):
@@ -187,9 +215,15 @@ class TestR02R03R04MfcLimits:
 
 
 class TestR05Rpm:
-    def test_low_warn(self):
+    """封版轮（2026-11-20 拍板#3）：R05 从「越界仅警告」改为三档 ——
+    < 下限 = 红拦；下限~谨慎边界（config caution_below_rpm）= 黄；
+    谨慎边界~上限 = 绿；超上限维持黄。边界全部从 config 推导，不在测试里写死工艺数值。"""
+
+    def test_below_min_is_error_not_warn(self):
         lo = CFG["process_defaults"]["agitation_rpm"]["min"]
-        assert run_one("R05", make_inputs(rpm=lo - 1)).level == validators.LEVEL_WARN
+        r = run_one("R05", make_inputs(rpm=lo - 1))
+        assert r.level == validators.LEVEL_ERROR
+        assert "禁止使用该配置" in r.message
 
     def test_high_warn(self):
         hi = CFG["process_defaults"]["agitation_rpm"]["max"]
@@ -197,6 +231,61 @@ class TestR05Rpm:
 
     def test_in_range_pass(self):
         assert run_one("R05", make_inputs()).level == validators.LEVEL_PASS
+
+    def test_factory_limits_are_sealed_values(self):
+        rng = CFG["process_defaults"]["agitation_rpm"]
+        assert rng["min"] == 60, "R05 下限应为拍板#3 的 60 rpm（未放宽到 40-50）"
+        assert rng["max"] == 150, "上限维持 requirements.md 第 3.1 节的 150 rpm"
+        assert rng["caution_below_rpm"] == 80, "黄档上界应为原推荐下限 80 rpm"
+
+
+class TestR05SealBoundaries:
+    """用户点名的三条边界（59 / 60 / 74 rpm）+ 80 绿档；
+    以及「600-1000 mL 段在 R05 提示里并列显示 R06 红线反解转速」的新行为与逆公式自洽性。"""
+
+    @staticmethod
+    def _backsolve_rpm(v_ml, eps):
+        """独立复算 R06 公式的逆：rpm = 60/(2π) × (ε·V ÷ (Np·D⁵))^(1/3)。"""
+        mp = CFG["mixing_physics"]
+        return (60.0 / (2.0 * math.pi)) * ((eps * v_ml / 1e6) / (mp["power_number_np"] * mp["impeller_diameter_m"] ** 5)) ** (1.0 / 3.0)
+
+    def test_59_error_60_warn_74_warn_80_pass(self):
+        rng = CFG["process_defaults"]["agitation_rpm"]
+        assert (rng["min"], rng["caution_below_rpm"]) == (60, 80)
+        assert run_one("R05", make_inputs(rpm=59.0)).level == validators.LEVEL_ERROR, "59 rpm 必须红拦"
+        assert run_one("R05", make_inputs(rpm=60.0)).level == validators.LEVEL_WARN, "60 rpm 起进入黄档"
+        r74 = run_one("R05", make_inputs(rpm=74.0))
+        assert r74.level == validators.LEVEL_WARN, "74 rpm 仍在黄档"
+        assert "小体积注意沉降与混合不足" in r74.message, r74.message
+        assert run_one("R05", make_inputs(rpm=80.0)).level == validators.LEVEL_PASS, "80 rpm 起绿"
+
+    def test_fact_cap_listed_in_small_volume_band(self):
+        band = CFG["process_defaults"]["agitation_rpm"]["fact_cap_volume_ml"]
+        red = CFG["mixing_physics"]["epsilon_red_w_kg"]
+        lo = CFG["process_defaults"]["agitation_rpm"]["min"]
+        for v_ml in (band[0], 800.0, band[1]):
+            cap = self._backsolve_rpm(v_ml, red)
+            shown = ("%.1f" % (math.floor(cap * 10.0 + 1e-9) / 10.0)).rstrip("0").rstrip(".")
+            msg = run_one("R05", make_inputs(rpm=74.0, v_work_ml=v_ml)).message
+            assert ("转速事实上限约 %s rpm" % shown) in msg, (v_ml, msg)
+            assert ("请把转速控制在 %d–%s rpm 之间" % (lo, shown)) in msg, (v_ml, msg)
+            eps_back = (CFG["mixing_physics"]["power_number_np"] * (cap * 2.0 * math.pi / 60.0) ** 3
+                        * CFG["mixing_physics"]["impeller_diameter_m"] ** 5 / (v_ml / 1e6))
+            assert eps_back == pytest.approx(red, rel=1e-9), "R05 引用的反解转速与 R06 公式不自洽"
+        assert self._backsolve_rpm(600.0, red) == pytest.approx(73.2, abs=0.05), "600 mL 红线转速应约 73.2 rpm（第八轮手算表）"
+
+    def test_fact_cap_hidden_outside_band(self):
+        band = CFG["process_defaults"]["agitation_rpm"]["fact_cap_volume_ml"]
+        msg = run_one("R05", make_inputs(rpm=74.0, v_work_ml=band[1] + 1000.0)).message
+        assert "转速事实上限" not in msg, msg
+
+    def test_fact_cap_silent_when_diameter_missing(self):
+        """防御：D 被改回 null 时，R05 不得崩溃，也不得编造一个上限数字。"""
+        cfg = copy.deepcopy(CFG)
+        cfg["mixing_physics"]["impeller_diameter_m"] = None
+        r = validators.rule_r05(make_inputs(rpm=74.0, v_work_ml=600.0), cfg)
+        assert r.level == validators.LEVEL_WARN
+        assert "转速事实上限" not in r.message
 
 
 class TestR07R08Volumes:

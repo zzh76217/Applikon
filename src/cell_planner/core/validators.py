@@ -4,6 +4,8 @@ requirements.md 第五节校验规则 —— 第三轮起全部 18 条（R01-R18
 所有阈值来自 config/config.yaml（get_config），本文件不写死任何工艺数值。
 R06 特殊处理（用户 2026-11-11 定案）：叶轮直径 D 为 null 时不计算 ε，
 第四轮补强：D 已填但工作体积 ≤ 0 或直径 ≤ 0 时，返回红/黄并说明原因，严禁除零崩溃。
+封版轮（2026-11-20）：R05 改三档（<下限红、下限~谨慎区边界黄、边界~上限绿），并在小体积段并列显示
+R06 红线反解出的"转速事实上限"；R06 在推荐区上限~黄线之间的文案更正为"高于推荐区上限但未达黄线"。
 R15 合并答复#5 的三类密度检查：CD_seed>CD_inoc、CD_seed 上限报红、反应器起始密度合理区间报黄。
 输出黄色警告"叶轮直径参数缺失，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃。
 """
@@ -67,6 +69,13 @@ def _n(x: float) -> str:
     return ("%.2f" % x).rstrip("0").rstrip(".")
 
 
+def _eps_n(x: float) -> str:
+    """ε 专用数字格式：小于 0.01 W/kg 时保留三位小数，避免界面上出现"ε ≈ 0 W/kg"这种误导写法。"""
+    if 0 < abs(x) < 0.01:
+        return ("%.3f" % x).rstrip("0").rstrip(".")
+    return _n(x)
+
+
 def run_validation(inp: SetupInputs, cfg: Optional[dict] = None) -> List[RuleResult]:
     """按 R01→R18 顺序逐条校验，返回结果列表。"""
     cfg = cfg or get_config()
@@ -111,14 +120,68 @@ def rule_r04(inp: SetupInputs, cfg: dict) -> RuleResult:
                      cfg["hardware"]["mfc_max_ml_min"]["co2"], LEVEL_ERROR)
 
 
+def _rpm_at_epsilon(inp: SetupInputs, cfg: dict, eps_target: float):
+    """R06 公式的解析逆：反算"比功率达到 eps_target 时对应的搅拌转速"（rpm）。
+
+    ε = Np·N³·D⁵ ÷ V（ρ 在 P 与 ε 中相消），N = rpm×2π÷60
+    → rpm = 60÷(2π) × (ε×V ÷ (Np×D⁵))^(1/3)。
+    参数缺失或不合理（D=null、D≤0、V≤0）时返回 None，由调用方省略提示，严禁抛异常。
+    """
+    mp = cfg["mixing_physics"]
+    d = mp.get("impeller_diameter_m")
+    np_ = mp.get("power_number_np")
+    if not d or not np_ or d <= 0 or np_ <= 0 or inp.v_work_ml <= 0:
+        return None
+    v_m3 = inp.v_work_ml / 1000000.0
+    cube = eps_target * v_m3 / (np_ * (d ** 5))
+    if cube <= 0:
+        return None
+    return (60.0 / (2.0 * math.pi)) * (cube ** (1.0 / 3.0))
+
+
+def _r05_fact_cap_hint(inp: SetupInputs, cfg: dict) -> str:
+    """封版轮拍板#3：工作体积落在 config 指定区间（出厂 600–1000 mL）时，
+    R05 提示里并列显示该体积下 ε 红线的反解转速（=该段"事实上限"），
+    消除"R05 要求够快 / R06 要求够慢"把用户两头卡死的问题。区间与阈值全部取自 config。"""
+    rng = cfg["process_defaults"]["agitation_rpm"]
+    band = rng.get("fact_cap_volume_ml")
+    if not band or len(band) != 2:
+        return ""
+    v_lo, v_hi = band
+    if not (v_lo <= inp.v_work_ml <= v_hi):
+        return ""
+    red = cfg["mixing_physics"]["epsilon_red_w_kg"]
+    cap = _rpm_at_epsilon(inp, cfg, red)
+    if cap is None:
+        return ""
+    cap_shown = math.floor(cap * 10.0 + 1e-9) / 10.0   # 向下取整到 0.1 rpm：提示里的上限值本身必须不越红线
+    return ("本体积段（%s–%s mL）受 R06 剪切红线 ε = %s W/kg 限制，转速事实上限约 %s rpm，"
+            "请把转速控制在 %s–%s rpm 之间；此段以 R06 的实际判定为准，R05 与 R06 不再互相卡。"
+            % (_n(v_lo), _n(v_hi), _n(red), _n(cap_shown), _n(rng["min"]), _n(cap_shown)))
+
+
 def rule_r05(inp: SetupInputs, cfg: dict) -> RuleResult:
+    """封版轮拍板#3 改的三档：低于下限 = 🔴 拦截；下限到谨慎边界之间 = 🟡 黄（注意沉降与混合不足）；
+    谨慎边界到上限 = 🟢 通过；超过上限维持原来的 🟡 黄（需人工确认）。"""
     rng = cfg["process_defaults"]["agitation_rpm"]
     lo, hi = rng["min"], rng["max"]
-    if lo <= inp.rpm <= hi:
-        return RuleResult("R05", "搅拌转速范围", LEVEL_PASS,
-                          "转速 %s rpm，位于 %s–%s rpm 推荐范围。" % (_n(inp.rpm), _n(lo), _n(hi)))
-    return RuleResult("R05", "搅拌转速范围", LEVEL_WARN,
-                      "转速 %s rpm 超出 %s–%s rpm（CHO 剪切敏感），可继续但需人工确认。" % (_n(inp.rpm), _n(lo), _n(hi)))
+    caution = rng.get("caution_below_rpm", lo)
+    hint = _r05_fact_cap_hint(inp, cfg)
+    if inp.rpm < lo:
+        return RuleResult("R05", "搅拌转速范围", LEVEL_ERROR,
+                          "转速 %s rpm 低于允许下限 %s rpm，混合不足与细胞沉降风险高，禁止使用该配置，请提高转速。%s"
+                          % (_n(inp.rpm), _n(lo), hint))
+    if inp.rpm > hi:
+        return RuleResult("R05", "搅拌转速范围", LEVEL_WARN,
+                          "转速 %s rpm 超出 %s–%s rpm（CHO 剪切敏感），可继续但需人工确认。%s"
+                          % (_n(inp.rpm), _n(lo), _n(hi), hint))
+    if inp.rpm < caution:
+        return RuleResult("R05", "搅拌转速范围", LEVEL_WARN,
+                          "转速 %s rpm 处于 %s–%s rpm 谨慎区，小体积注意沉降与混合不足，请人工确认罐内混合是否均匀。%s"
+                          % (_n(inp.rpm), _n(lo), _n(caution), hint))
+    return RuleResult("R05", "搅拌转速范围", LEVEL_PASS,
+                      "转速 %s rpm，位于 %s–%s rpm 推荐范围。%s"
+                      % (_n(inp.rpm), _n(caution), _n(hi), hint))
 
 
 def rule_r06(inp: SetupInputs, cfg: dict) -> RuleResult:
@@ -142,12 +205,18 @@ def rule_r06(inp: SetupInputs, cfg: dict) -> RuleResult:
     power_w = np_ * rho * (n_rad_s ** 3) * (d ** 5)
     eps = power_w / (rho * v_m3)
     txt = "比功率 ε ≈ %s W/kg（红线 %s、黄线 %s、推荐区 %s–%s W/kg）。" % (
-        _n(eps), _n(red), _n(yellow), _n(rec_lo), _n(rec_hi))
+        _eps_n(eps), _n(red), _n(yellow), _n(rec_lo), _n(rec_hi))
     if eps > red:
         return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_ERROR, "超过红线，禁止使用该配置！" + txt)
     if eps > yellow:
         return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_WARN, "接近剪切红线，建议降速并人工复核。" + txt)
-    note = "处于推荐区。" if rec_lo <= eps <= rec_hi else "低于推荐区，剪切安全但混合可能偏弱。"
+    # 封版轮拍板#4：0.04 < ε ≤ 0.05 这一段原文案写成"低于推荐区"是反话，已更正为"高于推荐区上限但未达黄线"
+    if rec_lo <= eps <= rec_hi:
+        note = "处于推荐区。"
+    elif eps > rec_hi:
+        note = "高于推荐区上限但未达黄线，建议按低速复核。"
+    else:
+        note = "低于推荐区，剪切安全但混合可能偏弱。"
     return RuleResult("R06", "能量耗散率（剪切安全）", LEVEL_PASS, note + txt)
 
 

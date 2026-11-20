@@ -117,26 +117,33 @@ class TestTotalCellsGuards:
 
 
 class TestAgitationStartSuggestion:
-    """补充公式 B：分段阈值与建议转速取自提示词文档算例（≤1.0 L→80；1.0–1.8 L→100；>1.8 L→120）；
-    分段表本体从 config 读取，测试不硬编码表内容以外的数值。"""
+    """补充公式 B：分段阈值从 config 读取。
+    封版轮（2026-11-20 拍板#2＝方案 A）把旧经验分档 80/100/120 rpm 下调为 60/70/80 rpm，
+    原因是 D=0.052 m 落地后旧值会让 1200 mL/100 rpm、2000 mL/120 rpm 直接撞 R06 剪切红线；
+    新分档同时保证不低于 R05 拦截下限 60 rpm（否则软件自己的建议值会被软件自己拦红）。"""
 
     @staticmethod
     def _bands():
         return get_config()["agitation_start_suggestion"]["bands_ml"]
 
-    def test_doc_example_2000ml_suggests_120(self):
-        assert agitation_start_rpm_suggestion(2000.0, self._bands()) == pytest.approx(120.0)
+    def test_bands_are_the_sealed_values(self):
+        bands = self._bands()
+        assert [b["max_ml"] for b in bands] == [1000, 1800, None]
+        assert [b["rpm"] for b in bands] == [60, 70, 80], "分档应为封版轮拍板#2 的 60/70/80 rpm"
 
-    def test_small_volume_suggests_80(self):
-        assert agitation_start_rpm_suggestion(800.0, self._bands()) == pytest.approx(80.0)
+    def test_large_volume_suggests_80(self):
+        assert agitation_start_rpm_suggestion(2000.0, self._bands()) == pytest.approx(80.0)
+
+    def test_small_volume_suggests_60(self):
+        assert agitation_start_rpm_suggestion(800.0, self._bands()) == pytest.approx(60.0)
 
     def test_boundary_1000ml_uses_lower_band(self):
-        assert agitation_start_rpm_suggestion(1000.0, self._bands()) == pytest.approx(80.0)
-        assert agitation_start_rpm_suggestion(1000.5, self._bands()) == pytest.approx(100.0)
+        assert agitation_start_rpm_suggestion(1000.0, self._bands()) == pytest.approx(60.0)
+        assert agitation_start_rpm_suggestion(1000.5, self._bands()) == pytest.approx(70.0)
 
     def test_boundary_1800ml(self):
-        assert agitation_start_rpm_suggestion(1800.0, self._bands()) == pytest.approx(100.0)
-        assert agitation_start_rpm_suggestion(1801.0, self._bands()) == pytest.approx(120.0)
+        assert agitation_start_rpm_suggestion(1800.0, self._bands()) == pytest.approx(70.0)
+        assert agitation_start_rpm_suggestion(1801.0, self._bands()) == pytest.approx(80.0)
 
     def test_zero_volume_raises(self):
         with pytest.raises(ValueError, match="工作体积"):
