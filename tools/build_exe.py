@@ -8,7 +8,8 @@ r"""第六轮：把软件打包成 Windows 桌面版（.exe）。
 产物：
     dist\细胞培养接种与批次配置规划软件.exe        ← 双击即用，目标电脑不需要装 Python
     dist\config\config.yaml                        ← 出厂默认参数（可直接编辑，改完重启软件生效）
-    dist\使用说明.txt                               ← 中文说明书
+    dist\使用说明.txt                               ← 中文说明书（纯文本，唯一事实来源）
+    dist\使用说明.docx                              ← Word 版说明书（由 txt 自动生成，内容一致）
     dist\data\README.txt                           ← 数据目录说明
     dist\本版本信息.txt                             ← 版本号、大小、SHA256、构建时间
     dist\<同名>.zip                                ← 上面几件一起打包，便于拷到实验电脑
@@ -65,6 +66,7 @@ def build(onefile: bool) -> int:
     exe_name = str(info.get("exe_name") or "细胞培养接种与批次配置规划软件")
     version = str(info.get("version") or "0.0.0")
     manual_name = str(info.get("manual_file") or "使用说明.txt")
+    docx_name = str(info.get("manual_docx_file") or "使用说明.docx")
     icon_rel = str(info.get("icon_file") or "")
     icon_path = (ROOT / icon_rel) if icon_rel else None
 
@@ -116,6 +118,19 @@ def build(onefile: bool) -> int:
     if not manual_src.is_file():
         raise SystemExit("缺少中文说明书：%s（第六轮交付物，不能没有）" % manual_src)
     shutil.copyfile(manual_src, DIST / manual_name)
+    # 4b) Word 版说明书（第七轮补充，用户拍板"要 Word 说明书"）：
+    #     每次打包都从纯文本说明书重新生成，杜绝 txt 与 docx 各说各话。
+    sys.path.insert(0, str(ROOT / "tools"))
+    import build_docx_manual  # noqa: WPS433  只用标准库，不是新依赖
+    try:
+        build_docx_manual.build(str(ROOT / "docs" / manual_name),
+                               str(ROOT / "docs" / docx_name))
+    except SystemExit as exc:
+        raise SystemExit("生成 Word 版说明书失败：%s" % exc)
+    docx_src = ROOT / "docs" / docx_name
+    if not docx_src.is_file():
+        raise SystemExit("缺少 Word 版中文说明书：%s" % docx_src)
+    shutil.copyfile(docx_src, DIST / docx_name)
     if (ROOT / "data" / "README.txt").is_file():
         (DIST / "data").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "data" / "README.txt", DIST / "data" / "README.txt")
@@ -136,8 +151,9 @@ def build(onefile: bool) -> int:
         "",
         "怎么用：把整个 dist 文件夹拷到实验电脑任意位置（建议 D 盘新建文件夹，"
         "不要放 C:\\Program Files，也不要放桌面以外的只读位置），双击 exe 即可。",
+        "说明书：使用说明.txt（纯文本）与 使用说明.docx（Word 版，内容逐字一致，可用 Word 打开打印）。",
         "改参数：编辑 exe 同目录的 config\\config.yaml，保存后重启软件生效。",
-        "出问题：把 logs\\软件运行日志.txt 和 使用说明.txt 一起发给开发者。",
+        "出问题：把 logs\\软件运行日志.txt 和 使用说明.txt（或 .docx）一起发给开发者。",
     ]
     (DIST / "本版本信息.txt").write_text("\n".join(info_lines) + "\n", encoding="utf-8-sig")
 

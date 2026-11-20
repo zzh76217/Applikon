@@ -358,7 +358,8 @@ app_info:
   log_dir: "logs"                       # 运行日志目录（相对程序目录，自动创建）
   log_file: "软件运行日志.txt"           # 出错时把中文堆栈追加到这里，可直接发给开发者
   log_max_mb: 5                         # 日志超过此大小先轮转为 .old，避免无限膨胀
-  manual_file: "使用说明.txt"            # 随 exe 一起分发的中文说明书文件名
+  manual_file: "使用说明.txt"            # 随 exe 一起分发的中文说明书文件名（唯一事实来源）
+  manual_docx_file: "使用说明.docx"      # Word 版说明书：由 tools\build_docx_manual.py 从上面那份 txt 自动生成
   icon_file: "assets/app.ico"           # 窗口/ exe 图标（相对程序目录或包内资源目录）
   exe_name: "细胞培养接种与批次配置规划软件"   # tools/build_exe.py 生成的 exe 主名
   locations_template: "你的文件都在这里：配置 {config}｜数据目录 {data}｜运行日志 {log}｜说明书 {manual}"   # ①页底部灰色一行的文案；花括号由程序填入真实路径
