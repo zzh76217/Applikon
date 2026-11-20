@@ -48,10 +48,17 @@ def test_window_title_contains_version_and_run_mode(win):
     assert "{" not in title
 
 
-# ==================== 六页齐全 ====================
+# ==================== 六页齐全（第七轮起：3 大板块 + 板块内 6 个子页签） ====================
+def _sub_tab_titles(window):
+    """按 _PAGE_ORDER 顺序收集子页签名称（定位方式变了，断言的等价内容不变）。"""
+    positions = [window.page_tabs[key] for key in window._PAGE_ORDER]
+    return [window.sub_tabs[gi].tabText(si) for gi, si in positions]
+
+
 def test_six_tabs_are_present(win):
-    assert win.tabs.count() == 6
-    labels = [win.tabs.tabText(i) for i in range(win.tabs.count())]
+    assert win.tabs.count() == 3, "外层应当只有 3 个大板块"
+    labels = _sub_tab_titles(win)
+    assert len(labels) == 6, "六个页面必须一个不少"
     for mark in "①②③④⑤⑥":
         assert any(mark in text for text in labels)
 
@@ -59,7 +66,7 @@ def test_six_tabs_are_present(win):
 def test_tab_titles_come_from_config_not_hardcoded(win):
     """AGENTS.md 硬约束：界面文案也集中在 config，页签名必须与 app_info.tab_titles 一致。"""
     expect = [str(x).strip() for x in cl.get_config()["app_info"]["tab_titles"]]
-    assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == expect
+    assert _sub_tab_titles(win) == expect
 
 
 def test_window_fits_available_screen(win):
@@ -105,7 +112,7 @@ def test_hardware_tab_is_scrollable_so_it_does_not_push_window_offscreen(win):
     """
     from PySide6.QtWidgets import QScrollArea
 
-    hw_tab = win.tabs.widget(1)
+    hw_tab = win.page("hardware")   # 第七轮：硬件配置已并入板块①的子页签，按键名定位
     assert hw_tab.findChildren(QScrollArea), "② 硬件配置页没有滚动区"
     assert hw_tab.minimumSizeHint().height() <= 200, (
         "② 页最小高 %d px 过大，仍然会把窗口撑出屏幕" % hw_tab.minimumSizeHint().height()

@@ -33,12 +33,9 @@ def window_title(cfg: Mapping, mode: str) -> str:
         return "%s（%s）" % (fields["name"], fields["mode"])
 
 
-def tab_titles(cfg: Mapping, count: int) -> list:
-    """①–⑥ 页签名称，来自 config.app_info.tab_titles。
-    配置缺失、类型不对或条数不够时，返回的列表用空字符串占位，由界面按顺序补内置兜底名。
-    放在 config 的原因：打包成 .exe 后在窄屏/高缩放的实验电脑上页签会被挤出窗口，
-    用户自己把名字改短就能解决，不必重新打包。"""
-    raw = app_info(cfg).get("tab_titles")
+def _titles_from(cfg: Mapping, key: str, count: int) -> list:
+    """按 config 里的某个名称清单取前 count 项；缺位用空字符串占位，由界面补兜底名。"""
+    raw = app_info(cfg).get(key)
     if not isinstance(raw, list):
         return []
     out = []
@@ -46,6 +43,43 @@ def tab_titles(cfg: Mapping, count: int) -> list:
         item = raw[i] if i < len(raw) else ""
         out.append(str(item).strip() if item is not None else "")
     return out
+
+
+def outer_tab_titles(cfg: Mapping, count: int) -> list:
+    """第七轮：主界面上层 3 个大板块的名称，来自 config.app_info.outer_tab_titles。
+    只影响显示文字，不涉及任何计算/校验逻辑。"""
+    return _titles_from(cfg, "outer_tab_titles", count)
+
+
+def tab_titles(cfg: Mapping, count: int) -> list:
+    """①–⑥ 页签名称，来自 config.app_info.tab_titles。
+    配置缺失、类型不对或条数不够时，返回的列表用空字符串占位，由界面按顺序补内置兜底名。
+    放在 config 的原因：打包成 .exe 后在窄屏/高缩放的实验电脑上页签会被挤出窗口，
+    用户自己把名字改短就能解决，不必重新打包。"""
+    return _titles_from(cfg, "tab_titles", count)
+
+
+def ui_text(cfg: Mapping, key: str, default: str = "") -> str:
+    """第七轮：取 config.app_info.ui_texts 里的一条界面文案。
+
+    配置没写、写空或整段缺失时，退回调用方给的兜底句子；界面代码里因此只保留兜底文案，
+    正式文案一律集中在 config，用户想改措辞不用改代码（AGENTS.md 硬约束 1、2）。"""
+    node = app_info(cfg).get("ui_texts")
+    raw = node.get(key) if isinstance(node, Mapping) else None
+    text = str(raw).strip() if raw is not None and str(raw).strip() else str(default)
+    return text
+
+
+def ui_text_fmt(cfg: Mapping, key: str, default: str, **fields) -> str:
+    """带占位符的界面文案：{n} {ctrl} {off} {reason} 之类由调用方填。
+
+    占位符写错（用户在 config 里自己改了句子）也不抛异常，直接返回未填充的原文，
+    保证主界面不会因为一句文案而崩。"""
+    template = ui_text(cfg, key, default)
+    try:
+        return template.format(**fields)
+    except (KeyError, IndexError, ValueError):
+        return template
 
 
 def locations_text(cfg: Mapping, *, config_path: object, data_dir: Optional[Path],

@@ -185,9 +185,18 @@ class TemplateTab(QWidget):
             QMessageBox.critical(self, "回填①页失败",
                                  "参数已读出，但填回①页时出问题：%s" % exc)
             return
-        tabs = getattr(self.host, "tabs", None)
-        if tabs is not None:
-            tabs.setCurrentIndex(0)
+        # 第七轮：主界面变成"3 大板块 + 板块内子页签"，按序号跳页已无意义，统一走 goto_page(key)
+        moved = False
+        goto = getattr(self.host, "goto_page", None)
+        if callable(goto):
+            try:
+                moved = bool(goto("planner"))
+            except Exception:
+                moved = False
+        if not moved:
+            tabs = getattr(self.host, "tabs", None)
+            if tabs is not None:
+                tabs.setCurrentIndex(0)
         QMessageBox.information(self, "已载入", "模板「%s」的 %d 项参数已填入①页并重新计算。\n"
                                               "备注：%s\n别忘了：计算结果仍需人工复核。"
                                               % (name, len(params), data.get("备注") or "（无）"))

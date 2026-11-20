@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""主窗口（第五轮）：六个标签页。
+"""主窗口（第七轮）：外层三大板块，板块内子页签承载原来的六个页面。
+
+板块①「配置与校验」：子页签 ① 配置与校验、② 硬件配置
+板块②「分析与对比」：子页签 ④ 列名映射 → ③ 离线分析 → ⑤ 模板库对比（按使用顺序排）
+板块③「SOP 引导」：子页签 ⑥ SOP 引导
+下面六段仍是第五轮那六页，内容、公式、校验、导入逻辑一律未动，只换了挂载位置与外观。
+
+（历史说明·第五轮）六个标签页的内容职责如下。
 ① 批次配置与校验：参数输入区 / 计算结果区 / 校验提示区（R01-R18 全部 18 条）+ 配方 + 开机配置单导出。
 ② 硬件配置：改体积上下限、MFC 量程与推荐默认值，写回 config/config.yaml（保留注释，先备份 .bak）。
 ③ 离线分析：导入 my-Control 控制数据 CSV + 离线取样 CSV，生长曲线/μ、糖乳酸警戒、DO 偏差、收获建议、报告导出。
@@ -27,6 +34,7 @@ from cell_planner.core.config_loader import PROJECT_ROOT, config_source, get_con
 from cell_planner.core.diagnostics import bundled_asset, log_file, write_diagnostic
 from cell_planner.core import app_info
 from cell_planner.core.config_writer import update_config_file
+from cell_planner.ui import icons, theme
 from cell_planner.ui.analysis_tab import AnalysisTab
 from cell_planner.ui.mapping_tab import MappingTab
 from cell_planner.ui.sop_tab import SopTab
@@ -53,7 +61,8 @@ def _cfg_get(cfg: dict, path: tuple):
     return node
 
 
-# 页签兜底名称：config.app_info.tab_titles 缺失或没写全时按顺序补位（第六轮：窄屏可改短）
+# 子页签兜底名称：config.app_info.tab_titles 缺失或没写全时按顺序补位（第六轮：窄屏可改短）
+# 顺序即 _PAGE_ORDER：① 配置与校验 ② 硬件配置 ③ 离线分析 ④ 列名映射 ⑤ 模板库对比 ⑥ SOP 引导
 _TAB_FALLBACK_TITLES = (
     "① 配置与校验", "② 硬件配置", "③ 离线分析",
     "④ 列名映射", "⑤ 模板库对比", "⑥ SOP 引导",
@@ -151,24 +160,61 @@ class MainWindow(QMainWindow):
         if (new_w, new_h) != (self.width(), self.height()):
             self.resize(new_w, new_h)
 
-    # ================= 总体布局：六个标签页（名称来自 config.app_info.tab_titles） =================
+    # ================= 总体布局：三大板块（第七轮，仅改界面结构，不改任何业务逻辑） =================
+    # 外层只有 3 个大标签，名称来自 config.app_info.outer_tab_titles；
+    # 原来平铺的 6 个页签变成"板块内的子页签"，名称仍来自 config.app_info.tab_titles。
+    # 页面键名（planner/hardware/analysis/mapping/template/sop）是稳定标识，
+    # 界面跳转、单元测试都用键名定位，不再依赖页签序号。
+    _PAGE_ORDER = ("planner", "hardware", "analysis", "mapping", "template", "sop")
+    _PAGE_GROUPS = (
+        ("planner", "hardware"),                      # 板块① 配置与校验
+        ("mapping", "analysis", "template"),          # 板块② 分析与对比（先映射、再分析、后对比）
+        ("sop",),                                     # 板块③ SOP 引导
+    )
+    _OUTER_FALLBACK_TITLES = ("配置与校验", "分析与对比", "SOP 引导")
+
+    def _outer_titles(self) -> list:
+        """大板块名称取自 config，缺位用内置兜底名补齐。"""
+        got = app_info.outer_tab_titles(self.cfg, len(self._OUTER_FALLBACK_TITLES))
+        return [got[i] or self._OUTER_FALLBACK_TITLES[i] for i in range(len(self._OUTER_FALLBACK_TITLES))]
+
     def _build_ui(self) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
-        self.tabs = QTabWidget()
+
+        # 六个页面控件的构造顺序与内容与重构前完全一致，只是不再直接平铺到主标签栏
+        built = {"planner": self._build_planner_tab(), "hardware": self._build_hardware_tab()}
+        self.analysis_tab = built["analysis"] = AnalysisTab(self)
+        self.mapping_tab = built["mapping"] = MappingTab(self)
+        self.template_tab = built["template"] = TemplateTab(self)
+        self.sop_tab = built["sop"] = SopTab(self)
+
         titles = self._tab_titles()
+        outer_names = self._outer_titles()
+        self.pages = {}          # 页面键名 -> 控件
+        self.page_tabs = {}      # 页面键名 -> (大板块序号, 子页签序号)
+        self.sub_tabs = []       # 每个大板块内部那个 QTabWidget
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("outerTabs")
+        self.tabs.setMovable(False)
+        for gi, group in enumerate(self._PAGE_GROUPS):
+            sub = QTabWidget()
+            sub.setObjectName("subTabs%d" % gi)
+            sub.setMovable(False)
+            sub.setDocumentMode(True)
+            sub.tabBar().setExpanding(False)
+            sub.tabBar().setUsesScrollButtons(True)
+            for si, key in enumerate(group):
+                sub.addTab(built[key], titles[self._PAGE_ORDER.index(key)])
+                sub.setTabIcon(si, icons.icon(icons.PAGE_ICON_NAMES[key], self.cfg))
+                self.pages[key] = built[key]
+                self.page_tabs[key] = (gi, si)
+            self.tabs.addTab(sub, outer_names[gi])
+            self.tabs.setTabIcon(gi, icons.icon(icons.OUTER_ICON_NAMES[gi], self.cfg))
+            self.sub_tabs.append(sub)
         outer.addWidget(self.tabs, 1)
-        self.tabs.addTab(self._build_planner_tab(), titles[0])
-        self.tabs.addTab(self._build_hardware_tab(), titles[1])
-        self.analysis_tab = AnalysisTab(self)
-        self.mapping_tab = MappingTab(self)
-        self.template_tab = TemplateTab(self)
-        self.sop_tab = SopTab(self)
-        self.tabs.addTab(self.analysis_tab, titles[2])
-        self.tabs.addTab(self.mapping_tab, titles[3])
-        self.tabs.addTab(self.template_tab, titles[4])
-        self.tabs.addTab(self.sop_tab, titles[5])
+
         tip = QLabel("提醒：计算结果仅供规划参考，正式上机前必须由操作人员人工复核。本软件不连接、不控制 my-Control 硬件。")
         tip.setStyleSheet("color: rgb(176, 0, 0); font-weight: bold;")
         outer.addWidget(tip)
@@ -178,6 +224,72 @@ class MainWindow(QMainWindow):
         loc.setWordWrap(True)          # 第六轮：小屏（1024 宽）下折行，别把窗口最小宽度顶宽
         self.lbl_locations = loc                                # 第六轮：留出引用，单元测试与后续功能用
         outer.addWidget(loc)
+        self._apply_appearance()
+
+    # ================= 第七轮：统一外观（配色/字号/边距全部来自 config.app_info.theme） =================
+    def _apply_appearance(self) -> None:
+        """样式表与间距都从 config 生成；任何一处出错都只是"不美化"，绝不影响启动。"""
+        try:
+            self.setStyleSheet(theme.stylesheet(self.cfg))
+        except Exception:
+            self.setStyleSheet("")
+        try:
+            self._apply_metrics()
+        except Exception:
+            pass
+
+    def _apply_metrics(self) -> None:
+        """全局边距：子页外边距 margin_outer、分组内 margin_group、控件间距 spacing，
+        统一在遍历里设置，避免逐页手写导致各页留白不一致。"""
+        m = theme.metrics(self.cfg)
+        root = self.centralWidget().layout()
+        if root is not None:
+            root.setContentsMargins(m["margin_outer"], m["margin_outer"],
+                                    m["margin_outer"], m["margin_outer"])
+            root.setSpacing(m["spacing"])
+        for page in self.pages.values():
+            lay = page.layout()
+            if lay is not None:
+                lay.setContentsMargins(m["margin_outer"], m["margin_outer"],
+                                       m["margin_outer"], m["margin_outer"])
+                lay.setSpacing(m["spacing"])
+        for box in self.findChildren(QGroupBox):
+            lay = box.layout()
+            if lay is not None:
+                lay.setContentsMargins(m["margin_group"], m["margin_group"] + 6,
+                                       m["margin_group"], m["margin_group"])
+                lay.setSpacing(m["spacing"])
+
+    # ================= 第七轮：页面跳转（取代按页签序号定位的旧写法）=================
+    def page(self, key: str):
+        """按稳定键名取页面控件；不认识就返回 None，由调用方给中文提示。"""
+        return self.pages.get(str(key))
+
+    def goto_page(self, key: str) -> bool:
+        """跳到指定页面：先切大板块，再切板块内子页签。非法键返回 False，不抛异常。"""
+        pos = self.page_tabs.get(str(key))
+        if not pos:
+            return False
+        gi, si = pos
+        try:
+            self.tabs.setCurrentIndex(gi)
+            self.sub_tabs[gi].setCurrentIndex(si)
+        except Exception:
+            return False
+        return True
+
+    def current_page_key(self) -> str:
+        """当前显示的页面键名（不在六大页面里时返回空串）。"""
+        try:
+            gi = self.tabs.currentIndex()
+            widget = self.sub_tabs[gi].currentWidget()
+            for key, page in self.pages.items():
+                if page is widget:
+                    return key
+        except Exception:
+            return ""
+        return ""
+
 
     # ================= 标签页①：批次配置与校验 =================
     def _build_planner_tab(self) -> QWidget:
@@ -247,6 +359,7 @@ class MainWindow(QMainWindow):
         export_row.addWidget(self.btn_copy)
         rb_lay.addLayout(export_row)
         self.txt_results = QTextEdit()
+        self.txt_results.setObjectName("resultsArea")   # 第七轮：等宽字体，数字逐行对齐
         self.txt_results.setReadOnly(True)
         rb_lay.addWidget(self.txt_results)
         right.addWidget(result_box)
@@ -622,8 +735,17 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         lay = QVBoxLayout(tab)
         scroll.setWidget(tab)
-        intro = QLabel("在这里修改硬件上下限与推荐参数默认值，点「保存并生效」后写回 config/config.yaml（自动保留注释，并备份为 config.yaml.bak）。\n"
-                       "改完回到「① 批次配置与校验」点「恢复默认值」即可套用新默认；所有校验规则会立即使用新阈值。")
+        # 第七轮：这句话里要点名"回去哪个子页"，因此直接取 config 里的子页签名称，避免写死旧页名
+        try:
+            planner_name = self._tab_titles()[0]
+        except Exception:
+            planner_name = "① 配置与校验"
+        intro = QLabel(app_info.ui_text_fmt(
+            self.cfg, "hw_intro",
+            "在这里修改硬件上下限与推荐参数默认值，点「保存并生效」后写回 config/config.yaml"
+            "（自动保留注释，并备份为 config.yaml.bak）。\n"
+            "改完回到「{planner}」点「恢复默认值」即可套用新默认；所有校验规则会立即使用新阈值。",
+            planner=planner_name))
         intro.setWordWrap(True)
         lay.addWidget(intro)
 

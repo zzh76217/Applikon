@@ -19,12 +19,13 @@ from PySide6.QtWidgets import (
 )
 
 from cell_planner.core import analysis as an
+from cell_planner.core import app_info
 from cell_planner.core import column_mapping as cmap
 from cell_planner.core import template_store
 from cell_planner.core.config_loader import get_config
 from cell_planner.io_ import csv_reader as rd
 from cell_planner.io_ import simulator
-from cell_planner.ui import chart_view, common
+from cell_planner.ui import chart_view, common, theme
 
 METAB_HEADERS = ["时刻(h)", "葡萄糖(g/L)", "葡萄糖(mmol/L)", "糖警戒",
                  "乳酸(g/L)", "乳酸(mmol/L)", "乳酸警戒", "说明"]
@@ -51,6 +52,10 @@ class AnalysisTab(QWidget):
         self.cfg = host.cfg
         self.res: Optional[dict] = None
         self._build_ui()
+        try:
+            self._refresh_map_hint()      # 第七轮：首帧就显示映射状态，不必等到 showEvent
+        except Exception:
+            pass
 
     # ---------------- 布局 ----------------
     def _build_ui(self) -> None:
@@ -79,6 +84,15 @@ class AnalysisTab(QWidget):
         row_btn.addWidget(self.btn_sim)
         row_btn.addStretch(1)
         bl.addLayout(row_btn)
+        # 第七轮：顶部一行映射状态提示（只做显示与跳转，不参与任何分析计算）
+        row_map = QHBoxLayout()
+        self.lbl_map_hint = QLabel("")
+        self.lbl_map_hint.setWordWrap(True)
+        self.btn_goto_map = QPushButton(app_info.ui_text(self.cfg, "mapping_goto", "去「列名映射」"))
+        self.btn_goto_map.clicked.connect(self._goto_mapping)
+        row_map.addWidget(self.lbl_map_hint, 1)
+        row_map.addWidget(self.btn_goto_map)
+        lay.addLayout(row_map)
         lay.addWidget(box_file)
 
         # 设定区
@@ -206,6 +220,65 @@ class AnalysisTab(QWidget):
         QMessageBox.information(self, "模拟数据已生成",
                                 "已生成两份带 SIMULATED 标记的测试 CSV，并填到上面的文件框里。\n"
                                 "现在点「▶ 运行分析」看看效果。")
+
+    # ---------------- 第七轮：列名映射状态提示（依赖板块②子页 A 的保存结果） ----------------
+    def _refresh_map_hint(self) -> None:
+        """必需字段全部已对应 → 绿色"映射已完成"；有缺 → 黄色"请先在『列名映射』完成必需字段映射"。
+
+        只读 config 与映射文件，不改任何分析逻辑；任何异常都降级成黄色提示，绝不崩。"""
+        try:
+            need = {}
+            for kind in (cmap.DATASET_CONTROL, cmap.DATASET_OFFLINE):
+                need[kind] = [f["key"] for f in cmap.fields_for(kind, self.cfg) if f.get("required")]
+            saved = cmap.load_all(cfg=self.cfg)
+        except Exception as exc:
+            self.lbl_map_hint.setText(app_info.ui_text_fmt(
+                self.cfg, "mapping_unreadable",
+                "⚠️ 请先在『列名映射』完成必需字段映射：映射文件暂时读不了（{reason}），"
+                "请到该页检查后重新保存。", reason="%s: %s" % (exc.__class__.__name__, exc)))
+            self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "warn"))
+            self.btn_goto_map.setVisible(True)
+            return
+        missing = {}
+        for kind, keys in need.items():
+            got = saved.get(kind) or {}
+            missing[kind] = [k for k in keys if not str(got.get(k) or "").strip()]
+        n_miss = len(missing.get(cmap.DATASET_CONTROL, [])) + len(missing.get(cmap.DATASET_OFFLINE, []))
+        if n_miss == 0:
+            self.lbl_map_hint.setText(app_info.ui_text_fmt(
+                self.cfg, "mapping_ok",
+                "✅ 列名映射已完成：{n} 个必需字段都已对应到真实列名，可以直接点「▶ 运行分析」。",
+                n=len(need.get(cmap.DATASET_CONTROL, [])) + len(need.get(cmap.DATASET_OFFLINE, []))))
+            self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "pass"))
+        else:
+            self.lbl_map_hint.setText(app_info.ui_text_fmt(
+                self.cfg, "mapping_missing",
+                "⚠️ 请先在『列名映射』完成必需字段映射：还差 {n} 项（控制数据 {ctrl} 项、"
+                "离线取样 {off} 项）。保存后回到本页会自动刷新。",
+                n=n_miss,
+                ctrl=len(missing.get(cmap.DATASET_CONTROL, [])),
+                off=len(missing.get(cmap.DATASET_OFFLINE, []))))
+            self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "warn"))
+        self.btn_goto_map.setVisible(True)
+
+    def _goto_mapping(self) -> None:
+        """一键跳到『④ 列名映射』子页；跳转不可用只给中文提示，不抛异常。"""
+        try:
+            goto = getattr(self.host, "goto_page", None)
+            if not callable(goto) or not goto("mapping"):
+                raise TypeError("主窗口没有可用的 goto_page")
+        except Exception as exc:
+            QMessageBox.warning(self, "跳转失败",
+                                "无法自动跳到列名映射页，请手动点上方的「④ 列名映射」子页签。"
+                                "原因：" + str(exc))
+
+    def showEvent(self, event) -> None:
+        """每次切到本子页都刷新一次映射状态提示（纯界面刷新，不涉及计算）。"""
+        super().showEvent(event)
+        try:
+            self._refresh_map_hint()
+        except Exception:
+            pass
 
     # ---------------- 分析主流程 ----------------
     def _saved_mapping(self, kind: str) -> dict:
