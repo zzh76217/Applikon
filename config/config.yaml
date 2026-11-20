@@ -75,7 +75,8 @@ liquid_additives:                   # 答复#1：公式2 V_medium = V_work - V_s
 mixing_physics:                     # 答复#2/#3/#4：公式7 能量耗散；公式8 剪切速率暂缓
   broth_density_kg_m3: 1000         # rho 按 1000 近似（答复#4）
   power_number_np: 0.35             # Marine/推进式湍流典型 Np，与细胞株无关（答复#2）
-  impeller_diameter_m: null         # 【用户决定2026-11-11】暂保留 null。D 为 null 时：不计算 ε，也不判 R06 红/黄，改为输出黄色警告"⚠️ 缺少叶轮直径参数，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃
+  impeller_diameter_m: 0.052        # 【用户提供 2026-11-20】叶轮直径 D = 0.052 m（即 52 mm，Marine 叶轮）。填入后 R06 不再固定黄，改为真正计算比功率 ε：ε>0.1 W/kg 红禁止、ε>0.05 黄、0.02–0.04 绿（推荐区）
+                                    # 改回 null 即恢复防御分支：不计算 ε，输出黄色警告"⚠️ 缺少叶轮直径参数，无法计算剪切力，请后续在配置中补充"，严禁报错崩溃（②硬件配置页目前不能改 D，只能改本行）
   rpm_to_rad_s: "N[rad/s] = rpm / 60 * 2 * pi"
   epsilon_red_w_kg: 0.1             # 规则 R06 收紧：ε > 0.1 W/kg 报红禁止（答复#2，取代原文档 1.0）
   epsilon_yellow_w_kg: 0.05         # ε > 0.05 W/kg 报黄

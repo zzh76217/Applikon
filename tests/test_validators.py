@@ -2,8 +2,11 @@
 """校验规则 R01-R18 单元测试（第三轮起覆盖 requirements.md 第五节全部 18 条）。
 边界值全部从 config/config.yaml 推导，测试代码不写死工艺数值；
 期望的 级别（通过/警告/错误）取自 requirements.md 第五节规则表的"级别"列。
-第四轮追加：R06 非法体积/非法直径防护与"极端输入 18 条全跑不崩溃"测试。"""
+第四轮追加：R06 非法体积/非法直径防护与"极端输入 18 条全跑不崩溃"测试。
+第八轮（2026-11-20）：用户查定叶轮直径 D = 0.052 m 写入 config，R06 从"缺参数固定黄"
+变成真实 ε 判定；"D 为 null 走黄色防御分支"改为显式注入 null 复现，防御路径不得失守。"""
 import copy
+import math
 
 import pytest
 
@@ -14,8 +17,8 @@ CFG = get_config()
 
 
 def make_inputs(**overrides):
-    """构造一组基于 requirements 3.3 算例的基准输入（除 R06 因缺叶轮直径必为黄色外其余全绿），
-    再按用例覆盖个别字段。"""
+    """构造一组基于 requirements 3.3 算例的基准输入（除 R06 因 ε≈0.076 W/kg 超黄线必为黄色外
+    其余全绿；叶轮直径 D=0.052 m 已于第八轮填入 config），再按用例覆盖个别字段。"""
     pd = CFG["process_defaults"]
     base = dict(
         v_work_ml=2000.0,
@@ -56,7 +59,8 @@ class TestScope:
     def test_baseline_expected_warnings_are_r06_and_r16(self):
         res = validators.run_validation(make_inputs(), CFG)
         warn_ids = sorted(r.rule_id for r in res if r.level == validators.LEVEL_WARN)
-        assert warn_ids == ["R06", "R16"]   # 缺叶轮直径 + 曝气方式强制提示，均属预期
+        assert warn_ids == ["R06", "R16"]   # R06=ε 超黄线（第八轮起为实算）、R16=曝气方式强制提示，均属预期
+        assert sum(1 for r in res if r.level == validators.LEVEL_ERROR) == 0
 
     def test_baseline_no_error(self):
         res = validators.run_validation(make_inputs(), CFG)
@@ -68,13 +72,19 @@ class TestScope:
 
 
 class TestR06MissingDiameter:
-    """用户定案：D 为 null → 黄色警告并说明原因，不得崩溃。"""
+    """第一轮答复#3 定下的防御分支：D 为 null → 黄色警告并说明原因，不得崩溃。
+
+    第八轮出厂 config 已填入 D=0.052 m，所以这里必须显式注入 null 来复现该分支，
+    而不是依赖出厂值 —— 防御路径以后仍然不许失守。"""
 
     def test_warns_when_diameter_null(self):
-        assert CFG["mixing_physics"]["impeller_diameter_m"] is None
-        r = run_one("R06", make_inputs())
+        cfg = copy.deepcopy(CFG)
+        cfg["mixing_physics"]["impeller_diameter_m"] = None
+        results = {x.rule_id: x for x in validators.run_validation(make_inputs(), cfg)}
+        r = results["R06"]
         assert r.level == validators.LEVEL_WARN
         assert "叶轮直径" in r.message
+        assert "W/kg" not in r.message   # 缺 D 时不应给出 ε 数值
 
     def test_computes_epsilon_when_diameter_given(self):
         cfg = copy.deepcopy(CFG)
@@ -83,6 +93,72 @@ class TestR06MissingDiameter:
         r06 = results["R06"]
         assert r06.level in (validators.LEVEL_PASS, validators.LEVEL_WARN, validators.LEVEL_ERROR)
         assert "W/kg" in r06.message
+
+
+class TestR06WithFactoryDiameter:
+    """第八轮：用户拍板 D = 0.052 m（=52 mm）写入 config，R06 必须真算 ε。
+
+    ε 的期望值按 requirements.md 第三节公式独立复算：P = Np·ρ·N³·D⁵，ε = P ÷ (ρ·V)；
+    手算过程与逐体积对照表见 docs/第八轮验收说明.md（未在测试里迁就被测代码）。"""
+
+    def test_factory_diameter_is_52_mm(self):
+        assert CFG["mixing_physics"]["impeller_diameter_m"] == pytest.approx(0.052, rel=1e-9), \
+            "出厂叶轮直径应为 0.052 m（= 52 mm，用户 2026-11-20 拍板）"
+        assert CFG["mixing_physics"]["power_number_np"] == pytest.approx(0.35, rel=1e-9)
+        assert CFG["mixing_physics"]["impeller_constant_k"] is None   # k 维持不动
+
+    def test_epsilon_matches_independent_hand_computation(self):
+        mp = CFG["mixing_physics"]
+        d = mp["impeller_diameter_m"]
+        rho = mp["broth_density_kg_m3"]
+        n_rad_s = 100.0 * 2.0 * math.pi / 60.0          # 出厂默认 100 rpm
+        power_w = mp["power_number_np"] * rho * n_rad_s ** 3 * d ** 5
+        eps = power_w / (rho * 2000.0 / 1e6)            # 出厂算例 2.0 L
+        assert eps == pytest.approx(0.0764, rel=1e-3), "2.0 L / 100 rpm 的 ε 应约等于 0.0764 W/kg"
+        assert mp["epsilon_yellow_w_kg"] < eps <= mp["epsilon_red_w_kg"]   # 黄档：不拦导出
+
+    def test_r06_now_reports_a_number_instead_of_missing_d(self):
+        r = run_one("R06", make_inputs())
+        assert r.level == validators.LEVEL_WARN
+        assert "0.1" in r.message and "W/kg" in r.message
+        assert "缺少叶轮直径" not in r.message
+
+    def _hand_eps(self, rpm, v_ml=2000.0):
+        """按 requirements.md 第三节公式独立复算：P = Np·ρ·N³·D⁵，ε = P ÷ (ρ·V)。"""
+        mp = CFG["mixing_physics"]
+        n_rad_s = rpm * 2.0 * math.pi / 60.0
+        power_w = mp["power_number_np"] * mp["broth_density_kg_m3"] * n_rad_s ** 3 * mp["impeller_diameter_m"] ** 5
+        return power_w / (mp["broth_density_kg_m3"] * v_ml / 1e6)
+
+    def _hand_level(self, eps):
+        mp = CFG["mixing_physics"]
+        if eps > mp["epsilon_red_w_kg"]:
+            return validators.LEVEL_ERROR
+        if eps > mp["epsilon_yellow_w_kg"]:
+            return validators.LEVEL_WARN
+        return validators.LEVEL_PASS
+
+    def test_validator_tiers_follow_hand_computed_epsilon(self):
+        """扫一圈转速：软件 R06 的判级必须与手算 ε 落在同一档（ε ∝ N³，110 rpm 起应报红禁止）。"""
+        for rpm in (50.0, 64.0, 70.0, 80.0, 86.0, 90.0, 100.0, 109.0, 110.0, 120.0, 150.0):
+            eps = self._hand_eps(rpm)
+            assert run_one("R06", make_inputs(rpm=rpm)).level == self._hand_level(eps), \
+                "rpm=%s 时判级与手算 ε=%.4f 不一致" % (rpm, eps)
+        assert self._hand_eps(200.0) == pytest.approx(self._hand_eps(100.0) * 8.0, rel=1e-12)
+
+    def test_message_shows_the_same_number_as_hand_computation(self):
+        """R06 文案里给用户的 ε 数值必须与手算一致（界面按两位小数显示，故用绝对容差）。"""
+        for rpm, v_ml in ((100.0, 2000.0), (120.0, 2400.0), (80.0, 1000.0), (70.0, 1800.0)):
+            r = run_one("R06", make_inputs(rpm=rpm, v_work_ml=v_ml))
+            shown = float(r.message.split("\u03b5 \u2248 ")[1].split(" W/kg")[0])
+            assert shown == pytest.approx(self._hand_eps(rpm, v_ml), abs=0.005), r.message
+
+    def test_factory_default_case_is_warn_not_missing_param(self):
+        """出厂算例（2.0 L / 100 rpm）：黄档、不拦导出，且必须带上红线/黄线/推荐区三个参照数。"""
+        r = run_one("R06", make_inputs())
+        assert r.level == validators.LEVEL_WARN
+        for token in ("0.1", "0.05", "0.02", "0.04"):
+            assert token in r.message, "R06 文案缺少阈值参照 " + token
 
 
 class TestR01:
