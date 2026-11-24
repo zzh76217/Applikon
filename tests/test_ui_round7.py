@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """第七轮界面结构测试：外层三大板块、板块内子页签、统一外观、映射状态提示条。
 
 只测「页面挂在哪、外观是否取自 config、按钮跳得对不对」，
@@ -257,8 +257,8 @@ def test_map_hint_missing_returns_required_keyword(win, monkeypatch):
     monkeypatch.setattr(cmap, "load_all", lambda *a, **k: {cmap.DATASET_CONTROL: {}, cmap.DATASET_OFFLINE: {}})
     tab._refresh_map_hint()
     text = tab.lbl_map_hint.text()
-    assert "请先在『列名映射』完成必需字段映射" in text
-    assert theme.colors(cl.get_config())["warn_bg"] in tab.lbl_map_hint.styleSheet()
+    assert "尝试自动匹配" in text
+    assert theme.colors(cl.get_config())["none_bg"] in tab.lbl_map_hint.styleSheet()
     assert tab.btn_goto_map.isVisible() or tab.btn_goto_map.text()
 
 
@@ -267,7 +267,7 @@ def test_map_hint_counts_missing_fields(win, monkeypatch):
     partial = {cmap.DATASET_CONTROL: {"time": "Time"}, cmap.DATASET_OFFLINE: {}}
     monkeypatch.setattr(cmap, "load_all", lambda *a, **k: partial)
     tab._refresh_map_hint()
-    assert "还差 3 项" in tab.lbl_map_hint.text()
+    assert "缺少 3 个必需字段" in tab.lbl_map_hint.text()
 
 
 def test_map_hint_green_when_mapping_complete(win, monkeypatch):
@@ -316,11 +316,12 @@ def test_goto_map_button_falls_back_to_hint(win, monkeypatch):
     assert win.current_page_key() != "mapping"
 
 
-def test_map_hint_texts_are_not_hardcoded(win):
+def test_map_hint_texts_are_not_hardcoded(win, monkeypatch):
     """本轮新增文案全部能在 config.app_info.ui_texts 里找到并覆盖。"""
     cfg = cl.get_config()
     tab = win.page("analysis")
     assert tab.btn_goto_map.text() == str(cfg["app_info"]["ui_texts"]["mapping_goto"])
+    monkeypatch.setattr(cmap, "load_all", lambda *a, **k: {cmap.DATASET_CONTROL: {"time": "Time"}, cmap.DATASET_OFFLINE: {}})
     monkey_texts = {"mapping_missing": "自定义提示：{n} 项 / {ctrl} / {off}"}
     orig = cfg["app_info"]["ui_texts"].get("mapping_missing")
     cfg["app_info"]["ui_texts"].update(monkey_texts)
@@ -339,15 +340,13 @@ def test_map_hint_texts_are_not_hardcoded(win):
 
 
 # ==================== 六、本轮补的跨页跳转与旧页名清理 ====================
-def test_hardware_intro_names_the_real_subpage(win):
-    """② 硬件配置页顶部说明里点名的"回去那一页"，必须等于 config 里的子页签名称（不留旧页名死链）。"""
+def test_hardware_page_keeps_controls_without_intro(win):
+    """说明文字移除后，硬件设置与保存入口仍然可用。"""
     from PySide6.QtWidgets import QLabel
-    titles = ai.tab_titles(cl.get_config(), len(main_window._TAB_FALLBACK_TITLES))
     texts = [lab.text() for lab in win.page("hardware").findChildren(QLabel)]
-    intro = [t for t in texts if "在这里修改硬件上下限" in t]
-    assert intro, "② 硬件配置页顶部说明文字不见了"
-    assert titles[0] in intro[0], "说明里没写第一个子页签的真实名称：%s" % titles[0]
-    assert "批次配置与校验" not in intro[0], "说明里还留着旧页名，等于指向不存在的页面"
+    assert not any("在这里修改硬件上下限" in text for text in texts)
+    assert win.hw_widgets
+    assert win.btn_hw_save.text() == "保存并生效"
 
 
 def test_no_ui_widget_jumps_by_tab_index(win, monkeypatch, tmp_path):
@@ -372,3 +371,76 @@ def test_hw_intro_text_can_be_overridden_in_config():
     assert ai.ui_text_fmt(cfg, "hw_intro", "兜底", planner="① 配置与校验") == \
         "改完回到「① 配置与校验」继续。"
     assert ai.ui_text_fmt({}, "hw_intro", "默认句子 {planner}", planner="X") == "默认句子 X"
+
+
+# 工作流回归：不允许把旧结果与新输入混用。
+@pytest.mark.parametrize("field", ["v_work", "cell_line", "expr_check"])
+def test_changed_inputs_invalidate_results_and_block_export(win, monkeypatch, field):
+    assert win._last is not None
+    if field == "cell_line":
+        win.widgets[field].setText("新细胞株")
+    elif field == "expr_check":
+        win.chk_expr.setChecked(not win.chk_expr.isChecked())
+    else:
+        spin = win.widgets[field]
+        spin.setValue(spin.value() + 1)
+
+    assert win._last is None
+    assert win._sheet_rows() is None
+    assert win.tbl.rowCount() == 0
+    assert "重新计算" in win.lbl_summary.text()
+    win._copy_sheet()
+    assert win._last is None
+    win.compute()
+    assert win._last is not None
+    assert len(win._last["results"]) == 18
+
+
+def test_recipe_and_file_details_remain_accessible(win):
+    assert win.recipe_panel.isHidden()
+    win.recipe_toggle.click()
+    assert not win.recipe_panel.isHidden()
+    assert win.btn_recipe_save.parent() is not None
+
+
+def test_analysis_is_first_screen_in_its_section(win):
+    win.tabs.setCurrentIndex(1)
+    assert win.current_page_key() == "analysis"
+
+
+
+def test_parameter_sections_keep_all_inputs(win):
+    expected = {"cell_line", "medium", "v_work", "cd_seed", "cd_inoc", "days",
+                "vvm", "o2_ratio", "co2_ratio", "rpm", "temp_expr", "temp_growth",
+                "ph", "do", "sampling_ml", "base_pct", "af_pct"}
+    assert set(win.widgets) == expected
+    assert [win.input_tabs.tabText(i) for i in range(win.input_tabs.count())] == ["接种", "培养", "预留"]
+    for index in range(win.input_tabs.count()):
+        win.input_tabs.setCurrentIndex(index)
+        assert win.input_tabs.currentIndex() == index
+
+
+def test_result_summary_tracks_current_calculation(win):
+    current = win._last["inp"]
+    assert win.result_metrics["seed"].text() == "%s mL" % main_window._fmt(current.v_seed_ml)
+    assert win.result_metrics["medium"].text() == "%s mL" % main_window._fmt(current.v_medium_ml)
+    assert win.result_metrics["air"].text() == "%s mL/min" % main_window._fmt(current.q_air_ml_min)
+    win.widgets["v_work"].setValue(current.v_work_ml + 100)
+    assert all(label.text() == "—" for label in win.result_metrics.values())
+    assert win._sheet_rows() is None
+    win.compute()
+    assert win.result_metrics["seed"].text() == "%s mL" % main_window._fmt(win._last["inp"].v_seed_ml)
+
+
+
+def test_error_opens_checks_and_blocks_export(win, monkeypatch):
+    from cell_planner.core import validators
+    win.result_tabs.setCurrentIndex(0)
+    win.widgets["v_work"].setValue(100)
+    win.compute()
+    assert win.result_tabs.currentIndex() == 1
+    assert any(r.level == validators.LEVEL_ERROR for r in win._last["results"])
+    assert win.tbl.rowCount() == 18
+    assert win._export_blocked_by_errors() is True
+    win.result_tabs.setCurrentIndex(0)
+    assert win.txt_results.toPlainText()

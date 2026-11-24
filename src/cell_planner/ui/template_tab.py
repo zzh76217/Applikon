@@ -44,18 +44,18 @@ class TemplateTab(QWidget):
         lay = QVBoxLayout(page)
 
         # ---- 模板库 ----
-        box_tpl = QGroupBox("一、实验方案模板（保存①页参数，下次一键调用）")
+        box_tpl = QGroupBox("实验方案模板")
         tl = QVBoxLayout(box_tpl)
         self.tbl_tpl = common.make_table(TPL_HEADERS)
         tl.addWidget(self.tbl_tpl)
         row_name = QHBoxLayout()
         row_name.addWidget(QLabel("模板名称："))
         self.edit_name = QLineEdit()
-        self.edit_name.setPlaceholderText("例如：CHO-DG44 2L 补料批次（同名会覆盖更新）")
+        self.edit_name.setPlaceholderText("同名模板将覆盖")
         row_name.addWidget(self.edit_name, 1)
         row_name.addWidget(QLabel("备注："))
         self.edit_note = QLineEdit()
-        self.edit_note.setPlaceholderText("选填，例如：37℃ 稳定 / 表达期 34℃")
+        self.edit_note.setPlaceholderText("选填")
         row_name.addWidget(self.edit_note, 1)
         tl.addLayout(row_name)
         row_btn = QHBoxLayout()
@@ -63,24 +63,26 @@ class TemplateTab(QWidget):
         self.btn_load = QPushButton("载入选中行 → ①页")
         self.btn_del = QPushButton("删除选中模板")
         self.btn_refresh = QPushButton("刷新")
+        for button in (self.btn_load, self.btn_del, self.btn_refresh):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_save, self.btn_load, self.btn_del, self.btn_refresh):
             row_btn.addWidget(b)
         row_btn.addStretch(1)
         tl.addLayout(row_btn)
-        tl.addWidget(common.status_label("说明：模板存在本机 data/templates.db（SQLite），不联网、不上传。"
-                                         "①页的参数快照与第三轮的「配方」是两套东西，配方更适合随手备份。"))
         lay.addWidget(box_tpl)
 
         # ---- 批次记录 ----
-        box_bat = QGroupBox("二、批次记录（先在③页做离线分析，再点「把本次分析存为批次记录」）")
+        box_bat = QGroupBox("批次记录")
         bl = QVBoxLayout(box_bat)
         self.tbl_batch = common.make_table(BATCH_HEADERS)
         self.tbl_batch.setSelectionMode(QAbstractItemView.ExtendedSelection)
         bl.addWidget(self.tbl_batch)
         row_b = QHBoxLayout()
-        self.btn_cmp = QPushButton("📊 对比勾选的批次（按住 Ctrl 可多选，至少 2 个）")
+        self.btn_cmp = QPushButton("对比选中批次（Ctrl 多选）")
         self.btn_del_batch = QPushButton("删除勾选的批次记录")
         self.btn_refresh_b = QPushButton("刷新")
+        for button in (self.btn_del_batch, self.btn_refresh_b):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_cmp, self.btn_del_batch, self.btn_refresh_b):
             row_b.addWidget(b)
         row_b.addStretch(1)
@@ -88,11 +90,11 @@ class TemplateTab(QWidget):
         lay.addWidget(box_bat)
 
         # ---- 对比结果 ----
-        box_cmp = QGroupBox("三、多批次关键参数对比（展示哪些字段由 config.template_library.compare_fields 决定）")
+        box_cmp = QGroupBox("批次对比")
         cl = QVBoxLayout(box_cmp)
         self.tbl_cmp = common.make_table(["指标"])
         cl.addWidget(self.tbl_cmp)
-        self.lbl_cmp = common.status_label("还没有对比结果。在上面的批次表里勾选至少 2 个批次，再点「对比勾选的批次」。")
+        self.lbl_cmp = common.status_label("暂无对比结果")
         cl.addWidget(self.lbl_cmp)
         lay.addWidget(box_cmp, 1)
 

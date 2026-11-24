@@ -41,6 +41,8 @@ class SopTab(QWidget):
         self.btn_uncheck = QPushButton("🔄 开始新批次：全部取消勾选")
         self.btn_check_copy = QPushButton("📋 复制确认单文本")
         self.btn_export = QPushButton("💾 导出确认单 CSV")
+        for button in (self.btn_uncheck, self.btn_check_copy):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_uncheck, self.btn_check_copy, self.btn_export):
             bar.addWidget(b)
         bar.addStretch(1)
@@ -105,7 +107,7 @@ class SopTab(QWidget):
                 lbl.setStyleSheet("color: %s; font-weight: bold;"
                                   % ("rgb(0,120,0)" if st["all_done"] else "rgb(150,90,0)"))
         ok, message = sop.export_gate(got, self.cfg)
-        self.lbl_rule.setText(self._rule_text() + "\n\n" + message)
+        self.lbl_rule.setText("正式操作以本实验室批准的 SOP 为准，需第二人复核。\n" + message)
         self.lbl_rule.setStyleSheet("color: %s; background-color: %s; padding: 6px; border-radius: 4px;"
                                     % (("rgb(0,110,0)" if ok and prog["all_done"] else "rgb(150,90,0)"),
                                        ("rgb(227,244,227)" if prog["all_done"] else "rgb(255,246,200)")))

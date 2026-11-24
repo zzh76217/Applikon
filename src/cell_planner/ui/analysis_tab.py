@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -68,19 +69,15 @@ class AnalysisTab(QWidget):
         lay = QVBoxLayout(page)
 
         # 数据文件区
-        box_file = QGroupBox("第一步：选择要分析的数据文件（my-Control 导出 CSV + 离线取样台账 CSV）")
+        box_file = QGroupBox("选择数据文件")
         bl = QVBoxLayout(box_file)
         self.edit_ctrl, row_ctrl = self._file_row("控制数据（DO/pH/温度/转速/MFC 随时间）")
         self.edit_off, row_off = self._file_row("离线取样（细胞密度/活率/葡萄糖/乳酸）")
         bl.addLayout(row_ctrl)
         bl.addLayout(row_off)
-        tip = QLabel("说明：列名对不上时，请到④「列名映射」页把真实表头对应到逻辑字段并保存，再回来点「运行分析」。"
-                     "只是想看界面效果的话，可以点下面的「造一份模拟数据试算」，模拟数据会显著标注 SIMULATED。")
-        tip.setWordWrap(True)
-        tip.setStyleSheet("color: rgb(80,80,80);")
-        bl.addWidget(tip)
         row_btn = QHBoxLayout()
-        self.btn_sim = QPushButton("造一份模拟数据试算（仅测试，标注 SIMULATED）")
+        self.btn_sim = QPushButton("生成模拟数据（仅测试）")
+        self.btn_sim.setProperty("uiRole", "secondary")
         row_btn.addWidget(self.btn_sim)
         row_btn.addStretch(1)
         bl.addLayout(row_btn)
@@ -89,6 +86,8 @@ class AnalysisTab(QWidget):
         self.lbl_map_hint = QLabel("")
         self.lbl_map_hint.setWordWrap(True)
         self.btn_goto_map = QPushButton(app_info.ui_text(self.cfg, "mapping_goto", "去「列名映射」"))
+        self.btn_goto_map.setMaximumWidth(160)
+        self.btn_goto_map.setProperty("uiRole", "secondary")
         self.btn_goto_map.clicked.connect(self._goto_mapping)
         row_map.addWidget(self.lbl_map_hint, 1)
         row_map.addWidget(self.btn_goto_map)
@@ -96,18 +95,17 @@ class AnalysisTab(QWidget):
         lay.addWidget(box_file)
 
         # 设定区
-        box_set = QGroupBox("第二步：分析设定")
+        box_set = QGroupBox("分析设定")
         form = QHBoxLayout(box_set)
         form.addWidget(QLabel("DO 设定点："))
         self.spin_do = QDoubleSpinBox()
         self.spin_do.setRange(0.0, 100.0)
         self.spin_do.setDecimals(1)
+        self.spin_do.setMaximumWidth(150)
         self.spin_do.setSuffix(" %")
         self.spin_do.setValue(float(self.cfg["process_defaults"]["do_percent"]["set"]))
         form.addWidget(self.spin_do)
-        self.lbl_do_rule = QLabel("")
-        self.lbl_do_rule.setWordWrap(True)
-        form.addWidget(self.lbl_do_rule, 1)
+        form.addStretch(1)
         lay.addWidget(box_set)
 
         # 动作区
@@ -116,6 +114,8 @@ class AnalysisTab(QWidget):
         self.btn_export = QPushButton("导出分析报告 CSV")
         self.btn_copy = QPushButton("复制分析摘要")
         self.btn_save_batch = QPushButton("把本次分析存为批次记录（⑤页可对比）")
+        for button in (self.btn_export, self.btn_copy, self.btn_save_batch):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_run, self.btn_export, self.btn_copy, self.btn_save_batch):
             row_act.addWidget(b)
         row_act.addStretch(1)
@@ -125,7 +125,7 @@ class AnalysisTab(QWidget):
         self.banner.setVisible(False)
         lay.addWidget(self.banner)
 
-        self.lbl_status = common.status_label("还没有运行分析。选好文件后点「▶ 运行分析」。")
+        self.lbl_status = common.status_label("暂无分析结果")
         lay.addWidget(self.lbl_status)
 
         # 结果区
@@ -135,7 +135,7 @@ class AnalysisTab(QWidget):
         self.tbl_metrics = common.make_table(["指标", "数值"])
         ll.addWidget(self._boxed("批次关键参数摘要", self.tbl_metrics))
         self.tbl_events = common.make_table(["级别", "类型", "起始(h)", "结束(h)", "持续(分钟)", "最低DO(%)", "说明"])
-        ll.addWidget(self._boxed("DO 报警事件（阈值来自 config.do_alarm）", self.tbl_events))
+        ll.addWidget(self._boxed("DO 报警事件", self.tbl_events))
         self.tbl_notes = common.make_table(["类型", "内容"])
         ll.addWidget(self._boxed("数据质量提示 / 错误", self.tbl_notes))
         split.addWidget(left)
@@ -168,7 +168,7 @@ class AnalysisTab(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(label + "："))
         edit = QLineEdit()
-        edit.setPlaceholderText("点右边「浏览…」选择 CSV 文件")
+        edit.setPlaceholderText("选择 CSV 文件")
         edit.setReadOnly(True)
         btn = QPushButton("浏览…")
         row.addWidget(edit, 1)
@@ -193,14 +193,6 @@ class AnalysisTab(QWidget):
         self.cfg = self.host.cfg
         do = self.cfg["process_defaults"]["do_percent"]
         self.spin_do.setValue(float(do["set"]))
-        da = self.cfg["do_alarm"]
-        self.lbl_do_rule.setText("报警规则：低于设定点 %s 个百分点持续 %s 分钟报黄、%s 分钟报红；"
-                                 "绝对红线 DO < %s%% 立即报红；设定点最低允许 %s%%（均取自 config）。"
-                                 % (common.fmt(da["deviation_yellow_points"]),
-                                    common.fmt(da["deviation_yellow_minutes"]),
-                                    common.fmt(da["deviation_red_minutes"]),
-                                    common.fmt(da["absolute_red_percent"]),
-                                    common.fmt(do["min"])))
 
     # ---------------- 试算：造模拟数据 ----------------
     def _make_simulated(self) -> None:
@@ -237,6 +229,7 @@ class AnalysisTab(QWidget):
                 "⚠️ 请先在『列名映射』完成必需字段映射：映射文件暂时读不了（{reason}），"
                 "请到该页检查后重新保存。", reason="%s: %s" % (exc.__class__.__name__, exc)))
             self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "warn"))
+            self.lbl_map_hint.setVisible(True)
             self.btn_goto_map.setVisible(True)
             return
         missing = {}
@@ -244,7 +237,13 @@ class AnalysisTab(QWidget):
             got = saved.get(kind) or {}
             missing[kind] = [k for k in keys if not str(got.get(k) or "").strip()]
         n_miss = len(missing.get(cmap.DATASET_CONTROL, [])) + len(missing.get(cmap.DATASET_OFFLINE, []))
-        if n_miss == 0:
+        all_empty = not any(str(value or "").strip() for kind in saved.values()
+                            if isinstance(kind, dict) for value in kind.values())
+        if all_empty:
+            self.lbl_map_hint.setText(app_info.ui_text(self.cfg, "mapping_auto",
+                "未保存列名映射：分析时将尝试自动匹配；若识别不正确，请检查列名映射。"))
+            self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "none"))
+        elif n_miss == 0:
             self.lbl_map_hint.setText(app_info.ui_text_fmt(
                 self.cfg, "mapping_ok",
                 "✅ 列名映射已完成：{n} 个必需字段都已对应到真实列名，可以直接点「▶ 运行分析」。",
@@ -259,6 +258,7 @@ class AnalysisTab(QWidget):
                 ctrl=len(missing.get(cmap.DATASET_CONTROL, [])),
                 off=len(missing.get(cmap.DATASET_OFFLINE, []))))
             self.lbl_map_hint.setStyleSheet(theme.hint_style(self.cfg, "warn"))
+        self.lbl_map_hint.setVisible(not all_empty)
         self.btn_goto_map.setVisible(True)
 
     def _goto_mapping(self) -> None:

@@ -15,14 +15,14 @@ from typing import Mapping
 # config 缺项/写错时的兜底值。数值与出厂 config.app_info.theme 一致，
 # 语义色三档刻意与 ui/common.py 的 LEVEL_BG 保持同一颜色，避免"这页黄那页黄得不一样"。
 DEFAULTS = {
-    "primary": "#2E7D8C",
-    "primary_dark": "#246573",
-    "primary_light": "#E8F1F3",
-    "window_bg": "#F4F6F7",
+    "primary": "#285AA1",
+    "primary_dark": "#1C3557",
+    "primary_light": "#EDF2F8",
+    "window_bg": "#F3F5F8",
     "base_bg": "#FFFFFF",
-    "text": "#26323A",
-    "muted_text": "#8A96A0",
-    "border": "#C7D3D8",
+    "text": "#222E3B",
+    "muted_text": "#64748B",
+    "border": "#D3DCE6",
     "pass_bg": "#E3F4E3",
     "warn_bg": "#FFF6C8",
     "error_bg": "#FFD5D5",
@@ -45,32 +45,64 @@ _INT_KEYS = ("font_pt", "title_pt", "margin_outer", "margin_group", "spacing", "
 
 _QSS = """
 QWidget { color: %(text)s; }
-QMainWindow, QDialog { background-color: %(window_bg)s; }
+QMainWindow { background-color: %(window_bg)s; }
+QDialog { background-color: %(window_bg)s; }
+QWidget#sidebar { background-color: %(base_bg)s; border: 1px solid %(border)s; border-radius: 12px; }
+QLabel#navTitle { color: %(muted_text)s; font-weight: bold; padding: 4px 8px; }
+QPushButton#navButton { text-align: left; background-color: transparent; color: %(text)s;
+    border: 1px solid transparent; border-radius: 8px; padding: 0 10px; }
+QPushButton#navButton:hover { background-color: %(primary_light)s; }
+QPushButton#navButton:checked { background-color: %(primary_light)s; color: %(primary_dark)s;
+    border: 1px solid %(border)s; font-weight: bold; }
+QPushButton#navButton:focus { border: 2px solid %(primary)s; }
+QTreeWidget { background-color: %(base_bg)s; border: 1px solid %(border)s; border-radius: 6px; }
+QWidget#appHeader { background-color: %(primary_dark)s; border-radius: 12px; }
+QLabel#appHeaderTitle { color: %(base_bg)s; font-size: %(header_pt)spt; font-weight: bold; }
+QLabel#appHeaderSubtitle { color: %(primary_light)s; }
+QLabel#appHeaderContext { color: %(primary_dark)s; background-color: %(primary_light)s;
+    border-radius: 12px; padding: 6px 12px; font-weight: bold; }
+QLabel#workspaceHeading { color: %(primary_dark)s; font-size: %(header_pt)spt; font-weight: bold; }
+QLabel#workspaceSubtitle, QLabel#plannerIntro, QLabel#plannerCheckHint { color: %(muted_text)s; }
+QLabel#safetyNotice { color: %(muted_text)s; padding: 2px 4px; }
 
 /* ---- 页签：上层 3 个大板块 + 板块内子页签，同一套样式 ---- */
-QTabWidget::pane { border: 1px solid %(border)s; border-radius: 6px;
+QTabWidget::pane { border: 1px solid %(border)s; border-radius: 12px;
                    background-color: %(base_bg)s; top: -1px; }
 QTabBar { qproperty-drawBase: 0; }
-QTabBar::tab { background-color: %(primary_light)s; color: %(text)s;
-               border: 1px solid %(border)s; border-bottom: none;
-               border-top-left-radius: 6px; border-top-right-radius: 6px;
-               padding: 5px 14px; margin-right: 3px; min-height: 22px; }
-QTabBar::tab:selected { background-color: %(base_bg)s; color: %(primary_dark)s;
-                        font-weight: bold; border-bottom: 3px solid %(primary)s; }
-QTabBar::tab:hover:!selected { background-color: %(primary_light)s;
-                               color: %(primary_dark)s; }
+QTabBar::tab { background-color: transparent; color: %(text)s;
+               border: 1px solid transparent; border-radius: 15px;
+               padding: 5px 14px; margin: 2px 3px 4px 0; min-height: 22px; }
+QTabBar::tab:selected { background-color: %(primary_light)s; color: %(primary_dark)s;
+                        font-weight: bold; border: 1px solid %(border)s; }
+QTabBar::tab:hover:!selected { background-color: %(window_bg)s;
+                               color: %(primary_dark)s; border: 1px solid %(border)s; }
+QTabBar::tab:focus { border: 2px solid %(primary)s; }
 QTabBar::tab:disabled { color: %(muted_text)s; }
+QTabWidget#outerTabs > QTabBar::tab:selected {
+    background-color: %(primary_dark)s; color: %(base_bg)s;
+    border: 1px solid %(primary_dark)s; }
 
 /* ---- 语义分组：标题加粗、比正文大一号 ---- */
 QGroupBox { background-color: %(base_bg)s; border: 1px solid %(border)s;
-            border-radius: 6px; margin-top: %(group_push)s;
+            border-radius: 12px; margin-top: %(group_push)s;
             font-weight: bold; font-size: %(title_pt)spt; }
+QGroupBox#plannerInput { background-color: %(base_bg)s; }
+QScrollArea > QWidget > QWidget#inputForm { background-color: %(base_bg)s; }
+QWidget#resultMetric { background-color: %(primary_light)s; border: 1px solid %(border)s; border-radius: 10px; }
+QLabel#metricCaption { color: %(text)s; }
+QLabel#metricValue { color: %(primary_dark)s; font-weight: bold; font-size: %(title_pt)spt; }
+QTabWidget#inputTabs::pane { border: none; background: transparent; }
+QTabWidget#inputTabs > QTabBar::tab { padding: 4px 10px; }
+QGroupBox#plannerResults, QGroupBox#plannerChecks {
+    border: none; margin-top: 0; background-color: %(base_bg)s; }
+QTabWidget#resultTabs::pane { border: 1px solid %(border)s;
+    border-radius: 8px; background-color: %(base_bg)s; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left;
                    left: %(title_left)s; padding: 0 4px; color: %(primary_dark)s; }
 
 /* ---- 按钮 ---- */
 QPushButton { background-color: %(primary)s; color: #FFFFFF;
-              border: 1px solid %(primary)s; border-radius: 4px;
+              border: 1px solid %(primary)s; border-radius: 10px;
               padding: 0 %(pad_h)s; min-height: %(ctrl_h)s; max-height: %(ctrl_h)s; }
 QPushButton:hover { background-color: %(primary_dark)s; border-color: %(primary_dark)s; }
 QPushButton:pressed { background-color: %(primary_dark)s; }
@@ -78,19 +110,32 @@ QPushButton:checked { background-color: %(primary_dark)s; }
 QPushButton:disabled { background-color: %(border)s; color: %(muted_text)s;
                        border-color: %(border)s; }
 
+QPushButton:focus { border: 2px solid %(text)s; }
+QPushButton[uiRole="secondary"] { background-color: %(base_bg)s; color: %(primary_dark)s;
+    border: 1px solid %(border)s; }
+QPushButton[uiRole="secondary"]:hover { background-color: %(primary_light)s;
+    border-color: %(primary)s; }
+QPushButton[uiRole="secondary"]:focus { border: 2px solid %(primary_dark)s; }
+QPushButton[uiRole="secondary"]:disabled { background-color: %(window_bg)s;
+    color: %(muted_text)s; border-color: %(border)s; }
+
 /* ---- 输入控件：高度一致，便于左对齐成网格 ---- */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit {
-    background-color: %(base_bg)s; border: 1px solid %(border)s; border-radius: 4px;
+    background-color: %(base_bg)s; border: 1px solid %(border)s; border-radius: 8px;
     padding: 1px 6px; min-height: %(ctrl_h)s;
     selection-background-color: %(primary)s; selection-color: #FFFFFF; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus {
-    border: 1px solid %(primary)s; }
+    border: 2px solid %(primary_dark)s; }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
     background-color: %(window_bg)s; color: %(muted_text)s; }
+QLineEdit:hover:!focus, QSpinBox:hover:!focus, QDoubleSpinBox:hover:!focus,
+QComboBox:hover:!focus { border: 1px solid %(primary)s; }
 QComboBox::drop-down { border: none; width: 18px; }
 QTextEdit, QPlainTextEdit { background-color: %(base_bg)s; border: 1px solid %(border)s;
                             border-radius: 4px; padding: 4px;
                             selection-background-color: %(primary)s; selection-color: #FFFFFF; }
+QTextEdit:focus, QPlainTextEdit:focus, QTableView:focus {
+    border: 2px solid %(primary_dark)s; }
 /* 数字结果区：等宽字体，逐行对齐好看 */
 QTextEdit#resultsArea { font-family: "%(mono)s"; }
 
@@ -110,7 +155,18 @@ QTableCornerButton::section { background-color: %(primary_light)s; border: none;
 /* ---- 其他 ---- */
 QLabel { background-color: transparent; }
 QScrollArea { border: none; background-color: transparent; }
+QScrollArea > QWidget > QWidget { background-color: %(window_bg)s; }
 QSplitter::handle { background-color: %(window_bg)s; }
+QToolButton { background-color: %(base_bg)s; color: %(primary_dark)s;
+    border: 1px solid %(border)s; border-radius: 9px; padding: 4px 9px; }
+QToolButton:hover { background-color: %(primary_light)s; border-color: %(primary)s; }
+QToolButton:checked { background-color: %(primary_light)s; color: %(primary_dark)s; }
+QToolButton:focus { border: 2px solid %(primary_dark)s; }
+QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }
+QScrollBar::handle:vertical { background: %(border)s; border-radius: 4px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: %(muted_text)s; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QCheckBox { spacing: %(spacing)s; }
 QRadioButton { spacing: %(spacing)s; }
 QProgressBar { border: 1px solid %(border)s; border-radius: 4px;
@@ -179,6 +235,7 @@ def stylesheet(cfg: Mapping) -> str:
         fields = dict(c)
         fields.update({
             "title_pt": m["title_pt"],
+            "header_pt": m["title_pt"] + 2,
             "mono": m["mono_family"],
             # 分组标题要独占一条"标题带"，否则加粗标题会压住分组里的第一行控件（例如表头）
             "group_push": "%dpx" % max(int(round(m["title_pt"] * 96 / 72)) + 5,

@@ -150,11 +150,17 @@ def pixmap(name: str, cfg: Optional[Mapping] = None, size: int = 32):
         return None
 
 
-def icon(name: str, cfg: Optional[Mapping] = None) -> QIcon:
-    """取 QIcon（同时给 16 与 32 两个尺寸，高缩放下不糊）。失败返回空图标，界面照常可用。"""
+def icon(name: str, cfg: Optional[Mapping] = None, selected_light: bool = False) -> QIcon:
+    """取不同尺寸图标；深色选中页签使用浅色图标。"""
     out = QIcon()
+    light_cfg = {"app_info": {"theme": {"primary": theme.colors(cfg or {})["base_bg"]}}}
     for size in (16, 32):
         pm = pixmap(name, cfg, size)
         if pm is not None:
             out.addPixmap(pm)
+        if selected_light:
+            light = pixmap(name, light_cfg, size)
+            if light is not None:
+                out.addPixmap(light, QIcon.Normal, QIcon.On)
+                out.addPixmap(light, QIcon.Selected, QIcon.On)
     return out

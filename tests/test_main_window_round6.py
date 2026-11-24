@@ -42,10 +42,7 @@ def win():
 def test_window_title_contains_version_and_run_mode(win):
     info = cl.get_config()["app_info"]
     title = win.windowTitle()
-    assert str(info["version"]) in title
-    assert str(info["name"]) in title
-    assert "源码版" in title                       # 本测试是源码运行
-    assert "{" not in title
+    assert title == str(info["name"])
 
 
 # ==================== 六页齐全（第七轮起：3 大板块 + 板块内 6 个子页签） ====================
@@ -74,20 +71,6 @@ def test_window_fits_available_screen(win):
     geo = QApplication.primaryScreen().availableGeometry()
     assert win.width() <= geo.width(), "窗口宽 %d 超出屏幕可用宽 %d" % (win.width(), geo.width())
     assert win.height() <= geo.height(), "窗口高 %d 超出屏幕可用高 %d" % (win.height(), geo.height())
-
-
-# ==================== 底部"你的文件都在这里"提示 ====================
-def test_locations_label_lists_all_four_paths(win):
-    text = win.lbl_locations.text()
-    assert text, "底部文件位置提示为空，说明路径没渲染出来"
-    assert Path(cl.CONFIG_FILE).name in text
-    assert "data" in text
-    assert str(cl.get_config()["app_info"]["log_file"]) in text
-    assert str(cl.get_config()["app_info"]["manual_file"]) in text
-
-
-def test_locations_label_is_findable_by_user(win):
-    assert win.lbl_locations in win.findChildren(QLabel)
 
 
 # ==================== AGENTS.md 硬约束 6：保留"需人工复核" ====================
@@ -124,11 +107,6 @@ def test_window_minimum_size_fits_small_laptop(win):
     min_hint = win.minimumSizeHint()
     assert min_hint.width() <= 1024, "窗口最小宽 %d px 超过 1024，窄屏会切掉右侧页签" % min_hint.width()
     assert min_hint.height() <= 732, "窗口最小高 %d px 超过 732，底部内容会被顶出屏幕" % min_hint.height()
-
-
-def test_locations_label_can_wrap(win):
-    """底部路径提示条要能折行，否则一行长路径会把窗口最小宽度顶到 900+。"""
-    assert win.lbl_locations.wordWrap(), "底部文件位置标签未开启自动折行"
 
 
 # ==================== 第六轮真机踩坑：窗口边框（标题栏）不在 geometry() 里 ====================

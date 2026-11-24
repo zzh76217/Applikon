@@ -1,7 +1,8 @@
 @echo off
 chcp 65001 >nul
 cd /d %~dp0
-set "PYEXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+set "PYEXE=%~dp0.venv\Scripts\python.exe"
+if not exist "%PYEXE%" set "PYEXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PYEXE%" set "PYEXE=python"
 "%PYEXE%" run.py
 if errorlevel 1 (

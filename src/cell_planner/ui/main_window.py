@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from cell_planner.core import formulas, recipe_store, sheet_export, validators
@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._fill_defaults()
         self.compute()
+        self._watch_input_changes()
 
     # ================= 第六轮：窗口标题与文件位置提示（渲染逻辑在 core/app_info.py，可单测） =================
     def _window_title(self) -> str:
@@ -183,6 +184,18 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
 
+        header = QWidget()
+        header.setObjectName("appHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(14, 8, 14, 8)
+        heading = QVBoxLayout()
+        heading.setSpacing(4)
+        app_name = QLabel(str((self.cfg.get("app_info") or {}).get("name") or "细胞培养接种与批次配置规划软件"))
+        app_name.setObjectName("appHeaderTitle")
+        heading.addWidget(app_name)
+        header_layout.addLayout(heading, 1)
+        outer.addWidget(header)
+
         # 六个页面控件的构造顺序与内容与重构前完全一致，只是不再直接平铺到主标签栏
         built = {"planner": self._build_planner_tab(), "hardware": self._build_hardware_tab()}
         self.analysis_tab = built["analysis"] = AnalysisTab(self)
@@ -210,20 +223,49 @@ class MainWindow(QMainWindow):
                 sub.setTabIcon(si, icons.icon(icons.PAGE_ICON_NAMES[key], self.cfg))
                 self.pages[key] = built[key]
                 self.page_tabs[key] = (gi, si)
+            if gi == 1:
+                sub.setCurrentWidget(built["analysis"])
             self.tabs.addTab(sub, outer_names[gi])
-            self.tabs.setTabIcon(gi, icons.icon(icons.OUTER_ICON_NAMES[gi], self.cfg))
+            self.tabs.setTabIcon(gi, icons.icon(icons.OUTER_ICON_NAMES[gi], self.cfg, selected_light=True))
             self.sub_tabs.append(sub)
-        outer.addWidget(self.tabs, 1)
+        # 保留原有页面容器及跳转接口，以侧边栏替代多层可见页签。
+        self.tabs.tabBar().hide()
+        for sub in self.sub_tabs:
+            sub.tabBar().hide()
+        workspace = QHBoxLayout()
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setMinimumWidth(170)
+        sidebar.setMaximumWidth(210)
+        nav_layout = QVBoxLayout(sidebar)
+        nav_layout.setContentsMargins(10, 14, 10, 14)
+        nav_title = QLabel("工作导航")
+        nav_title.setObjectName("navTitle")
+        nav_layout.addWidget(nav_title)
+        self.nav_buttons = {}
+        for key, label in (("planner", "配置规划"), ("hardware", "硬件配置"),
+                           ("mapping", "列名映射"), ("analysis", "离线分析"),
+                           ("template", "模板与对比"), ("sop", "SOP 引导")):
+            button = QPushButton(label)
+            button.setObjectName("navButton")
+            button.setCheckable(True)
+            button.setIcon(icons.icon(icons.PAGE_ICON_NAMES[key], self.cfg))
+            button.clicked.connect(lambda checked=False, page_key=key: self.goto_page(page_key))
+            nav_layout.addWidget(button)
+            self.nav_buttons[key] = button
+        nav_layout.addStretch(1)
+        workspace.addWidget(sidebar)
+        workspace.addWidget(self.tabs, 1)
+        outer.addLayout(workspace, 1)
+        self.tabs.currentChanged.connect(self._sync_navigation)
+        for sub in self.sub_tabs:
+            sub.currentChanged.connect(self._sync_navigation)
+        self._sync_navigation()
 
-        tip = QLabel("提醒：计算结果仅供规划参考，正式上机前必须由操作人员人工复核。本软件不连接、不控制 my-Control 硬件。")
-        tip.setStyleSheet("color: rgb(176, 0, 0); font-weight: bold;")
+        tip = QLabel("计算结果仅供参考，上机前需人工复核。")
+        tip.setObjectName("safetyNotice")
+        tip.setWordWrap(True)
         outer.addWidget(tip)
-        loc = QLabel(self._locations_text())
-        loc.setStyleSheet("color: rgb(90, 90, 90);")
-        loc.setTextInteractionFlags(Qt.TextSelectableByMouse)   # 第六轮：路径可全选复制，便于排障
-        loc.setWordWrap(True)          # 第六轮：小屏（1024 宽）下折行，别把窗口最小宽度顶宽
-        self.lbl_locations = loc                                # 第六轮：留出引用，单元测试与后续功能用
-        outer.addWidget(loc)
         self._apply_appearance()
 
     # ================= 第七轮：统一外观（配色/字号/边距全部来自 config.app_info.theme） =================
@@ -274,9 +316,15 @@ class MainWindow(QMainWindow):
         try:
             self.tabs.setCurrentIndex(gi)
             self.sub_tabs[gi].setCurrentIndex(si)
+            self._sync_navigation()
         except Exception:
             return False
         return True
+
+    def _sync_navigation(self, *_args) -> None:
+        current = self.current_page_key()
+        for key, button in self.nav_buttons.items():
+            button.setChecked(key == current)
 
     def current_page_key(self) -> str:
         """当前显示的页面键名（不在六大页面里时返回空串）。"""
@@ -300,9 +348,31 @@ class MainWindow(QMainWindow):
         lay.addWidget(splitter, 1)
 
         # 左：参数输入区（含配方条）
-        input_box = QGroupBox("参数输入区（数值均可按实验需要修改）")
+        input_box = QGroupBox("01  填写批次参数")
+        input_box.setObjectName("plannerInput")
+        input_box.setMinimumWidth(350)
         input_lay = QVBoxLayout(input_box)
 
+        input_intro = QLabel("请依次检查接种、培养和预留参数，再点击“计算并校验”。")
+        input_intro.setObjectName("plannerIntro")
+        input_intro.setWordWrap(True)
+        input_lay.addWidget(input_intro)
+
+        recipe_toggle = QToolButton()
+        recipe_toggle.setText("配方管理")
+        recipe_toggle.setCheckable(True)
+        recipe_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        recipe_toggle.setArrowType(Qt.RightArrow)
+        input_lay.addWidget(recipe_toggle)
+        recipe_panel = QWidget()
+        recipe_layout = QVBoxLayout(recipe_panel)
+        recipe_layout.setContentsMargins(0, 0, 0, 0)
+        recipe_panel.setVisible(False)
+        recipe_toggle.toggled.connect(recipe_panel.setVisible)
+        recipe_toggle.toggled.connect(lambda opened: recipe_toggle.setArrowType(Qt.DownArrow if opened else Qt.RightArrow))
+        input_lay.addWidget(recipe_panel)
+        self.recipe_panel = recipe_panel
+        self.recipe_toggle = recipe_toggle
         recipe_row = QHBoxLayout()
         self.edit_recipe = QLineEdit()
         self.edit_recipe.setPlaceholderText(str(self.cfg["recipes"]["builtin_default_name"]))
@@ -312,14 +382,16 @@ class MainWindow(QMainWindow):
         self.btn_recipe_save = QPushButton("保存为配方")
         self.btn_recipe_load = QPushButton("调用配方")
         self.btn_recipe_del = QPushButton("删除配方")
+        for button in (self.btn_recipe_save, self.btn_recipe_load, self.btn_recipe_del):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_recipe_save, self.btn_recipe_load, self.btn_recipe_del):
             btn_row_r.addWidget(b)
         recipe_row.addWidget(QLabel("配方名："))
         recipe_row.addWidget(self.edit_recipe, 1)
         recipe_row.addWidget(QLabel("已存配方："))
         recipe_row.addWidget(self.cmb_recipe)
-        input_lay.addLayout(recipe_row)
-        input_lay.addLayout(btn_row_r)
+        recipe_layout.addLayout(recipe_row)
+        recipe_layout.addLayout(btn_row_r)
         self.btn_recipe_save.clicked.connect(self._recipe_save)
         self.btn_recipe_load.clicked.connect(self._recipe_load)
         self.btn_recipe_del.clicked.connect(self._recipe_delete)
@@ -327,34 +399,84 @@ class MainWindow(QMainWindow):
 
         # 小屏适配：参数行多，在高缩放（dpr 2.25）的笔记本上表单本身就有 700+ px 高，
         # 装进滚动区后整窗最小高才压得下来，底部按钮与第 6 个页签不会被顶出屏幕。
-        form_host = QWidget()
-        self.form = QFormLayout(form_host)
-        self.form_scroll = QScrollArea()
-        self.form_scroll.setWidgetResizable(True)
-        self.form_scroll.setWidget(form_host)
-        input_lay.addWidget(self.form_scroll, 1)
+        self.input_tabs = QTabWidget()
+        self.input_tabs.setObjectName("inputTabs")
+        self.input_tabs.setDocumentMode(True)
+        self.input_forms = {}
+        for key, title in (("base", "接种"), ("culture", "培养"), ("supply", "预留")):
+            form_host = QWidget()
+            form_host.setObjectName("inputForm")
+            form = QFormLayout(form_host)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            form.setContentsMargins(8, 12, 8, 8)
+            form.setVerticalSpacing(10)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(form_host)
+            self.input_tabs.addTab(scroll, title)
+            self.input_forms[key] = form
+            if key == "base":
+                self.form_scroll = scroll
+        self.form = self.input_forms["base"]
+        input_lay.addWidget(self.input_tabs, 1)
         btn_row = QHBoxLayout()
         self.btn_calc = QPushButton("计算并校验")
         self.btn_calc.setDefault(True)
         self.btn_reset = QPushButton("恢复默认值")
+        self.btn_reset.setProperty("uiRole", "secondary")
         btn_row.addWidget(self.btn_calc)
         btn_row.addWidget(self.btn_reset)
         input_lay.addLayout(btn_row)
         splitter.addWidget(input_box)
 
         self._build_fields()
+        self.widgets["cd_seed"].setToolTip("种子液在接种前的细胞浓度。")
+        self.widgets["cd_inoc"].setToolTip("接种后反应器内希望达到的初始细胞密度。")
+        self.widgets["o2_ratio"].setToolTip("相对于空气流量的氧气补充比例。")
+        self.widgets["co2_ratio"].setToolTip("相对于空气流量的二氧化碳配比。")
         self.btn_calc.clicked.connect(self.compute)
         self.btn_reset.clicked.connect(self._restore)
         self._recipe_refresh()
 
-        # 右：上结果、下校验
-        right = QSplitter()
-        right.setOrientation(Qt.Vertical)
-        result_box = QGroupBox("计算结果区（开机配置预览）")
+        # 结果与校验共享一个完整工作区，状态汇总始终保留在页面底部。
+        right = QTabWidget()
+        right.setObjectName("resultTabs")
+        right.setDocumentMode(True)
+        self.result_tabs = right
+        result_box = QGroupBox("")
+        result_box.setObjectName("plannerResults")
         rb_lay = QVBoxLayout(result_box)
+        result_heading = QLabel("02  查看计算结果")
+        result_heading.setObjectName("workspaceHeading")
+        rb_lay.addWidget(result_heading)
+        result_subtitle = QLabel("核对关键数值后，查看安全校验并人工复核。")
+        result_subtitle.setObjectName("workspaceSubtitle")
+        result_subtitle.setWordWrap(True)
+        rb_lay.addWidget(result_subtitle)
+        metrics_row = QHBoxLayout()
+        self.result_metrics = {}
+        for key, label in (("seed", "接种液体积"), ("medium", "培养基体积"), ("air", "空气流量")):
+            metric = QWidget()
+            metric.setObjectName("resultMetric")
+            column = QVBoxLayout(metric)
+            column.setContentsMargins(12, 8, 12, 8)
+            column.setSpacing(3)
+            caption = QLabel(label)
+            caption.setObjectName("metricCaption")
+            value = QLabel("—")
+            value.setObjectName("metricValue")
+            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            value.setWordWrap(True)
+            column.addWidget(caption)
+            column.addWidget(value)
+            self.result_metrics[key] = value
+            metrics_row.addWidget(metric, 1)
+        rb_lay.addLayout(metrics_row)
         export_row = QHBoxLayout()
         self.btn_export_csv = QPushButton("一键导出开机配置单（CSV）")
         self.btn_copy = QPushButton("一键复制配置单文本")
+        self.btn_copy.setProperty("uiRole", "secondary")
         export_row.addWidget(self.btn_export_csv)
         export_row.addWidget(self.btn_copy)
         rb_lay.addLayout(export_row)
@@ -362,14 +484,22 @@ class MainWindow(QMainWindow):
         self.txt_results.setObjectName("resultsArea")   # 第七轮：等宽字体，数字逐行对齐
         self.txt_results.setReadOnly(True)
         rb_lay.addWidget(self.txt_results)
-        right.addWidget(result_box)
+        right.addTab(result_box, "配置结果")
         self.btn_export_csv.clicked.connect(self._export_csv)
         self.btn_copy.clicked.connect(self._copy_sheet)
         if not bool(self.cfg["setup_sheet_export"].get("clipboard_copy", True)):
             self.btn_copy.setEnabled(False)
 
-        valid_box = QGroupBox("校验提示区（R01–R18，共 18 条）")
+        valid_box = QGroupBox("")
+        valid_box.setObjectName("plannerChecks")
         vb_lay = QVBoxLayout(valid_box)
+        checks_heading = QLabel("03  核对安全校验")
+        checks_heading.setObjectName("workspaceHeading")
+        vb_lay.addWidget(checks_heading)
+        checks_subtitle = QLabel("逐条查看校验结果和提示，完成后再导出配置单。")
+        checks_subtitle.setObjectName("workspaceSubtitle")
+        checks_subtitle.setWordWrap(True)
+        vb_lay.addWidget(checks_subtitle)
         self.tbl = QTableWidget(0, 4)
         self.tbl.setHorizontalHeaderLabels(["规则", "名称", "结果", "提示说明"])
         self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -380,13 +510,36 @@ class MainWindow(QMainWindow):
         head.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         head.setSectionResizeMode(3, QHeaderView.Stretch)
         vb_lay.addWidget(self.tbl)
-        right.addWidget(valid_box)
-        right.setSizes([330, 430])
-        splitter.addWidget(right)
-        splitter.setSizes([420, 740])
+        right.addTab(valid_box, "安全校验")
+        result_column = QSplitter(Qt.Vertical)
+        result_column.addWidget(right)
+        validation_panel = QGroupBox("校验面板")
+        validation_layout = QVBoxLayout(validation_panel)
+        validation_help = QLabel("按级别展开查看；选择规则可定位到相关参数。")
+        validation_help.setWordWrap(True)
+        validation_layout.addWidget(validation_help)
+        self.validation_tree = QTreeWidget()
+        self.validation_tree.setHeaderLabels(["校验项目", "说明"])
+        self.validation_tree.setRootIsDecorated(True)
+        self.validation_tree.setWordWrap(True)
+        self.validation_tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.validation_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.validation_tree.itemClicked.connect(self._focus_validation_item)
+        self.validation_tree.itemActivated.connect(self._focus_validation_item)
+        validation_layout.addWidget(self.validation_tree)
+        result_column.addWidget(validation_panel)
+        result_column.setSizes([440, 260])
+        splitter.addWidget(result_column)
+        splitter.setSizes([440, 690])
 
         self.lbl_summary = QLabel("")
+        self.lbl_summary.setObjectName("validationSummary")
+        self.lbl_summary.setWordWrap(True)
         lay.addWidget(self.lbl_summary)
+        check_hint = QLabel("查看各项原因和处理提示，请选择右侧“安全校验”。")
+        check_hint.setObjectName("plannerCheckHint")
+        check_hint.setWordWrap(True)
+        lay.addWidget(check_hint)
         return tab
 
     def _add_line(self, key, label, getter):
@@ -413,9 +566,10 @@ class MainWindow(QMainWindow):
         self._add_spin("cd_inoc", "目标接种密度 CD_inoc", g("process_defaults", "inoculum_density_mcells_ml", "set"), 2, "×10⁶ cells/mL", 0.0,
                        float(self.cfg["density_input"]["reactor_initial_density_hard_max_mcells_ml"]))
         self._add_spin("days", "培养天数", g("process_defaults", "culture_days", "set"), 0, "天", 0.0, 365.0)
+        self.form = self.input_forms["culture"]
         self._add_spin("vvm", "通气量（vvm）", g("process_defaults", "aeration_vvm", "set"), 2, "vvm", 0.0, 5.0)
-        self._add_spin("o2_ratio", "O2 补充比例", g("process_defaults", "o2_ratio_percent", "set"), 1, "% of Air", 0.0, 100.0)
-        self._add_spin("co2_ratio", "CO2 配比", g("process_defaults", "co2_ratio_percent", "set"), 1, "% of Air", 0.0, 100.0)
+        self._add_spin("o2_ratio", "氧气补充比例（相对空气流量）", g("process_defaults", "o2_ratio_percent", "set"), 1, "%", 0.0, 100.0)
+        self._add_spin("co2_ratio", "二氧化碳配比（相对空气流量）", g("process_defaults", "co2_ratio_percent", "set"), 1, "%", 0.0, 100.0)
         self._add_spin("rpm", "搅拌初始转速", g("process_defaults", "agitation_rpm", "set"), 0, "rpm", 0.0, 2000.0)
         self.chk_expr = QCheckBox("启用表达阶段降温")
         self.defaults["expr_check"] = g("ui_defaults", "expression_temp_enabled")
@@ -425,6 +579,7 @@ class MainWindow(QMainWindow):
         self._add_spin("temp_growth", "生长阶段温度", g("process_defaults", "temp_growth_c", "set"), 1, "°C", 0.0, 45.0)
         self._add_spin("ph", "pH 设定点", g("process_defaults", "ph_setpoint", "set"), 2, "", 0.0, 14.0)
         self._add_spin("do", "DO 设定点", g("process_defaults", "do_percent", "set"), 0, "%", 0.0, 100.0)
+        self.form = self.input_forms["supply"]
         self._add_spin("sampling_ml", "计划累计取样体积", g("ui_defaults", "sampling_total_ml"), 0, "mL", 0.0, 99999.0)
         self._add_spin("base_pct", "碱液预留（占工作体积）",
                        lambda: self.cfg["liquid_additives"]["base_fraction_of_working"]["default"] * 100.0, 1, "%", 0.0, 50.0)
@@ -445,6 +600,26 @@ class MainWindow(QMainWindow):
     def _restore(self) -> None:
         self._fill_defaults()
         self.compute()
+
+    def _watch_input_changes(self) -> None:
+        """输入变更后让旧结果失效，避免导出与当前输入不一致的配置。"""
+        for widget in self.widgets.values():
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._mark_inputs_changed)
+            elif isinstance(widget, QDoubleSpinBox):
+                widget.valueChanged.connect(self._mark_inputs_changed)
+        self.chk_expr.toggled.connect(self._mark_inputs_changed)
+
+    def _mark_inputs_changed(self, *_args) -> None:
+        self._last = None
+        self.txt_results.clear()
+        for value in self.result_metrics.values():
+            value.setText("—")
+        self.txt_results.setPlaceholderText("参数已修改，请点击“计算并校验”。")
+        self.tbl.setRowCount(0)
+        self.validation_tree.clear()
+        self.lbl_summary.setText("参数已修改，请重新计算并校验后再导出或复制。")
+        self.lbl_summary.setStyleSheet(theme.hint_style(self.cfg, "warn"))
 
     # ---------------- 计算与校验 ----------------
     def compute(self) -> None:
@@ -482,9 +657,12 @@ class MainWindow(QMainWindow):
         self._render_table(results)
 
     def _render_results(self, inp, v_base, v_af) -> None:
+        self.result_metrics["seed"].setText("%s mL" % _fmt(inp.v_seed_ml))
+        self.result_metrics["medium"].setText("%s mL" % _fmt(inp.v_medium_ml))
+        self.result_metrics["air"].setText("%s mL/min" % _fmt(inp.q_air_ml_min))
         ap = self.cfg["alkali_pump"]
         lines = [
-            "=== 开机配置预览（可点上方按钮导出 CSV 或整段复制）===",
+            "开机配置单",
             "细胞株：%s        培养基：%s" % (self.widgets["cell_line"].text() or "（未填写）",
                                             self.widgets["medium"].text() or "（未填写）"),
             "",
@@ -540,7 +718,48 @@ class MainWindow(QMainWindow):
             extra.append("⚠️ 补充公式展示项无法计算（配置可能不完整）：" + str(exc))
         return extra
 
+    def _focus_validation_item(self, item, _column=0) -> None:
+        rule = item.data(0, Qt.UserRole)
+        targets = {
+            "R01": ("base", "v_work"), "R02": ("culture", "vvm"),
+            "R03": ("culture", "o2_ratio"), "R04": ("culture", "co2_ratio"),
+            "R05": ("culture", "rpm"), "R06": ("culture", "rpm"),
+            "R07": ("base", "cd_seed"), "R08": ("supply", "base_pct"),
+            "R09": ("culture", "do"), "R10": ("culture", "ph"),
+            "R11": ("culture", "temp_growth"), "R12": ("culture", "o2_ratio"),
+            "R13": ("culture", "co2_ratio"), "R14": ("culture", "vvm"),
+            "R15": ("base", "cd_seed"), "R17": ("supply", "sampling_ml"),
+            "R18": ("base", "days"),
+        }
+        if rule == "R16":
+            self.goto_page("hardware")
+            return
+        target = targets.get(rule)
+        if target:
+            section, key = target
+            index = ("base", "culture", "supply").index(section)
+            self.input_tabs.setCurrentIndex(index)
+            scroll = self.input_tabs.widget(index)
+            scroll.ensureWidgetVisible(self.widgets[key])
+            self.widgets[key].setFocus()
+
     def _render_table(self, results) -> None:
+        self.validation_tree.clear()
+        groups = {}
+        for level, label in ((validators.LEVEL_ERROR, "错误"),
+                             (validators.LEVEL_WARN, "警告"),
+                             (validators.LEVEL_PASS, "通过")):
+            group = QTreeWidgetItem([label, ""])
+            self.validation_tree.addTopLevelItem(group)
+            groups[level] = group
+        for result in results:
+            child = QTreeWidgetItem([result.rule_id + " " + result.name, result.message])
+            child.setData(0, Qt.UserRole, result.rule_id)
+            child.setToolTip(1, result.message)
+            groups[result.level].addChild(child)
+        for level, group in groups.items():
+            group.setText(0, "%s（%d）" % (group.text(0), group.childCount()))
+            group.setExpanded(level != validators.LEVEL_PASS and group.childCount() > 0)
         self.tbl.setRowCount(len(results))
         n_err = n_warn = 0
         for row, r in enumerate(results):
@@ -552,10 +771,15 @@ class MainWindow(QMainWindow):
             bg = _LEVEL_BG[r.level]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
+                item.setToolTip(text)
                 item.setBackground(bg)
                 if col <= 2:
                     item.setTextAlignment(Qt.AlignCenter)
                 self.tbl.setItem(row, col, item)
+        level = "error" if n_err else ("warn" if n_warn else "pass")
+        if n_err:
+            self.result_tabs.setCurrentIndex(1)
+        self.lbl_summary.setStyleSheet(theme.hint_style(self.cfg, level))
         self.lbl_summary.setText("校验汇总：共 %d 条规则：错误 %d 项，警告 %d 项，通过 %d 项。" % (
             len(results), n_err, n_warn, len(results) - n_err - n_warn)
             + ("存在 🔴 错误时禁止按此配置上机！" if n_err else
@@ -735,20 +959,6 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         lay = QVBoxLayout(tab)
         scroll.setWidget(tab)
-        # 第七轮：这句话里要点名"回去哪个子页"，因此直接取 config 里的子页签名称，避免写死旧页名
-        try:
-            planner_name = self._tab_titles()[0]
-        except Exception:
-            planner_name = "① 配置与校验"
-        intro = QLabel(app_info.ui_text_fmt(
-            self.cfg, "hw_intro",
-            "在这里修改硬件上下限与推荐参数默认值，点「保存并生效」后写回 config/config.yaml"
-            "（自动保留注释，并备份为 config.yaml.bak）。\n"
-            "改完回到「{planner}」点「恢复默认值」即可套用新默认；所有校验规则会立即使用新阈值。",
-            planner=planner_name))
-        intro.setWordWrap(True)
-        lay.addWidget(intro)
-
         self.hw_widgets = []   # (kind, spec, widget(s))
         groups = {}
         for spec in self.HW_SCALAR_SPECS:
@@ -788,7 +998,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(range_box)
 
         btn_row = QHBoxLayout()
-        self.btn_hw_save = QPushButton("保存并生效（写回 config.yaml）")
+        self.btn_hw_save = QPushButton("保存并生效")
         self.btn_hw_reload = QPushButton("放弃修改，重新读取当前配置")
         btn_row.addWidget(self.btn_hw_save)
         btn_row.addWidget(self.btn_hw_reload)

@@ -47,14 +47,14 @@ class MappingTab(QWidget):
         outer.addWidget(scroll)
         lay = QVBoxLayout(page)
 
-        box_pick = QGroupBox("第一步：选一份你实际导出的 CSV 当样例（只为读取表头，不做计算）")
+        box_pick = QGroupBox("选择 CSV 文件")
         pl = QVBoxLayout(box_pick)
         for kind in (cmap.DATASET_CONTROL, cmap.DATASET_OFFLINE):
             row = QHBoxLayout()
             row.addWidget(QLabel(cmap.DATASET_LABEL[kind] + "："))
             edit = QLineEdit()
             edit.setReadOnly(True)
-            edit.setPlaceholderText("点右边「浏览…」选择你的 CSV 文件")
+            edit.setPlaceholderText("选择 CSV 文件")
             btn = QPushButton("浏览…")
             btn.clicked.connect(lambda _=False, k=kind, e=edit: self._pick(k, e))
             row.addWidget(edit, 1)
@@ -62,8 +62,9 @@ class MappingTab(QWidget):
             pl.addLayout(row)
             self.edits[kind] = edit
         row_btn = QHBoxLayout()
-        self.btn_use3 = QPushButton("直接用③「离线分析」页当前选中的文件")
-        self.btn_load = QPushButton("读取表头，并把候选列名填进下面的下拉框")
+        self.btn_use3 = QPushButton("使用分析页的文件")
+        self.btn_load = QPushButton("读取表头")
+        self.btn_use3.setProperty("uiRole", "secondary")
         self.btn_use3.clicked.connect(self._use_tab3_files)
         self.btn_load.clicked.connect(self._load_headers)
         row_btn.addWidget(self.btn_use3)
@@ -76,13 +77,15 @@ class MappingTab(QWidget):
         for kind in (cmap.DATASET_CONTROL, cmap.DATASET_OFFLINE):
             lay.addWidget(self._section_box(kind))
 
-        box_act = QGroupBox("第三步：检查并保存")
+        box_act = QGroupBox("检查并保存")
         al = QVBoxLayout(box_act)
         row_act = QHBoxLayout()
         self.btn_save = QPushButton("💾 保存映射（③页立即生效）")
         self.btn_clear = QPushButton("本两页全部改回「不使用」")
         self.btn_check = QPushButton("检查映射是否与表头一致")
         self.btn_open = QPushButton("打开映射文件所在位置")
+        for button in (self.btn_clear, self.btn_check, self.btn_open):
+            button.setProperty("uiRole", "secondary")
         for b in (self.btn_save, self.btn_check, self.btn_clear, self.btn_open):
             row_act.addWidget(b)
         row_act.addStretch(1)
@@ -103,7 +106,7 @@ class MappingTab(QWidget):
         self.btn_open.clicked.connect(self._open_dir)
 
     def _section_box(self, kind: str) -> QGroupBox:
-        box = QGroupBox("%s —— 逐行把左边的字段对应到右边的实际列名" % cmap.DATASET_LABEL[kind])
+        box = QGroupBox(cmap.DATASET_LABEL[kind])
         v = QVBoxLayout(box)
         tbl = _make_grid(HEADERS)
         v.addWidget(tbl)
@@ -111,6 +114,7 @@ class MappingTab(QWidget):
         self.combos[kind] = {}
         row_btn = QHBoxLayout()
         btn_auto = QPushButton("按候选列名自动匹配这一类")
+        btn_auto.setProperty("uiRole", "secondary")
         btn_auto.clicked.connect(lambda _=False, k=kind: self._auto_match(k))
         row_btn.addWidget(btn_auto)
         row_btn.addStretch(1)
